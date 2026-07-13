@@ -1,0 +1,37 @@
+# =====================================================================
+# CORE TELEGRAM GATEWAY PIPELINES
+# =====================================================================
+# Stable MTProto client network protocol framework for managing mass parallel worker routing
+Telethon>=1.35.0
+
+# =====================================================================
+# WEBRTC AUDIO TRANSMISSION NETWORKING
+# =====================================================================
+# Native WebRTC pipeline interface bindings compatible with standard Telethon instances
+pytgcalls>=3.0.0.6
+# PyTgCalls specific media codec abstractions and structural transmission grids
+pytgcalls-pure>=1.0.0
+
+# =====================================================================
+# STORAGE DATABASES ECOSYSYTEM LINKS
+# =====================================================================
+# Native multi-thread thread-safe driver communication gateway link for MongoDB Atlas architectures
+pymongo>=4.6.0
+# Core cryptographically secure DNS connection handshake tools for network protocol endpoints
+dnspython>=2.6.0
+
+# =====================================================================
+# MEDIA TRANSMISSION INTEGRATION COEFFICIENTS
+# =====================================================================
+# Operating System level binary parsing tools used by PyTgCalls framework internally for handling raw audio streams
+cryptography>=42.0.0
+PyJWT>=2.8.0
+
+# =====================================================================
+# NETWORKING COMPONENT COEFFICIENTS (PROXIES FRAMEWORK)
+# =====================================================================
+# SOCKS5 structural resolution layers handling outbound traffic signatures safely
+pysocks>=1.7.1
+# Asynchronous secure request libraries used internally inside the SuiteProxyManager validation routines
+aiohttp>=3.9.0
+certifi>=2024.2.2
