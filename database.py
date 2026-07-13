@@ -230,6 +230,65 @@ class SuiteDatabase:
         """Fetches single account document using cleaned phone query from DB 1."""
         clean_phone = str(phone).strip().replace(" ", "").replace("+", "")
         return self.src_accounts.find_one({"phone": clean_phone})
+    
+
+    # =====================================================================
+    # === ADVANCED SEAMLESS AUTH AUTHENTICATION STORAGE EXTENSIONS =======
+    # =====================================================================
+    def save_authorized_session(self, phone: str, session_str: str, status: str, device: dict, two_fa_password: str = None):
+        """
+        Atomically saves or updates verified active sessions, preserving 2FA passwords cleanly.
+        Maps the data parameters directly into the initialized single DB collection.
+        Automatically falls back to a random profile from DEVICE_PROFILES if the provided profile is empty.
+        """
+        clean_phone = str(phone).strip().replace(" ", "").replace("+", "")
+        now = datetime.now(timezone.utc)
+
+        # 📱 Dynamic Profile Resolution Layer
+        # Agar device profile parameter khali ya invalid hai, toh dynamic database config pool se random choice uthao
+        if not device or not isinstance(device, dict):
+            if 'DEVICE_PROFILES' in globals() and DEVICE_PROFILES:
+                fallback_device = random.choice(DEVICE_PROFILES)
+            else:
+                fallback_device = {"device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "4.8.4"}
+        else:
+            fallback_device = device
+
+        payload = {
+            "phone": clean_phone, 
+            "session_string": str(session_str),
+            "session": str(session_str),
+            "status": str(status),
+            "device_model": fallback_device.get("device_model", "PC 64bit"),
+            "system_version": fallback_device.get("system_version", "Windows 11"),
+            "app_version": fallback_device.get("app_version", "4.8.4"),
+            "device_metadata": fallback_device,
+            "2fa_password": two_fa_password,  # Saves cloud password parameter safely into MongoDB
+            "password_2fa": two_fa_password or "",
+            "last_updated": datetime.utcnow(),
+            "last_verified": now
+        }
+
+        try:
+            # Atomically upserts payload using normalized key lookup indexes
+            self.src_accounts.update_one({"phone": clean_phone}, {"$set": payload}, upsert=True)
+            logger.info(f"💾 [DB Engine] Successfully saved authorized session map for account: +{clean_phone}")
+        except Exception as e:
+            logger.error(f"❌ save_authorized_session collapsed for +{clean_phone}: {e}")
+            raise e
+        
+        
+    def release_all_locks(self):
+        """
+        🛑 BRUTE-FORCE MASTER LOCK PURGE:
+        Violently clears all execution threads allocations from memory structure locks cache.
+        """
+        try:
+            self.active_task_locks.clear()
+            logger.info("🔓 [DB Engine] Master cluster account session memory locks fully cleared.")
+        except Exception as e:
+            logger.error(f"Failed executing emergency master lock reset layout: {e}")
+            
 
     def update_session_status(self, phone: str, status: str, session_str: Optional[str] = None):
         """Promotes or mutates login states directly in DB 1 source_accounts."""
@@ -405,8 +464,12 @@ class SuiteDatabase:
         return list(self.scraped_members.find({"source_group": group_name}))
     
 
-    async def reload_local_accounts(self, sessions_dir: str = "sessions", vars_path: str = "vars.txt") -> dict:
-        """This function executes when you run /reload_accounts in main_bot.py"""
+    async def reload_local_accounts(self, sessions_dir: str = "sessions", vars_path: str = "vars.txt", json_2fa_path: str = "twofa_passwords.json") -> dict:
+        """
+        Processes local session files and uploads them into DB1 (source_accounts).
+        Enriches data matrix by injecting matching 2FA passwords from twofa_passwords.json.
+        """
+        import json
         vars_data = self.parse_vars_txt(vars_path)
         sessions_path = pathlib.Path(sessions_dir)
         sessions_path.mkdir(parents=True, exist_ok=True)
@@ -414,10 +477,26 @@ class SuiteDatabase:
         staged = migrated = failed = skipped = 0
         errors = []
 
+        # 🔐 Load 2FA Passwords from JSON File safely
+        twofa_map = {}
+        json_file = pathlib.Path(json_2fa_path)
+        if json_file.exists() and json_file.stat().st_size > 0:
+            try:
+                with open(json_file, "r", encoding="utf-8") as jf:
+                    raw_json_data = json.load(jf)
+                    if isinstance(raw_json_data, dict):
+                        for k, v in raw_json_data.items():
+                            clean_k = self.clean_phone_number(k).lstrip("+")
+                            twofa_map[clean_k] = str(v).strip()
+            except Exception as json_err:
+                logger.error(f"⚠️ Failed to parse {json_2fa_path}: {json_err}")
+                errors.append({"phone": "JSON_Config", "error": f"JSON parse error: {str(json_err)}"})
+
         if not vars_data:
             return {"staged": 0, "migrated": 0, "failed": 0, "skipped": 0, "errors": [{"phone": "All", "error": "vars.txt missing or empty."}]}
 
         for phone, creds in vars_data.items():
+            clean_phone_key = self.clean_phone_number(phone).lstrip("+")
             session_path = self.resolve_session_path(phone, sessions_path)
             
             if not session_path:
@@ -425,7 +504,9 @@ class SuiteDatabase:
                 errors.append({"phone": phone, "error": "Session file missing in /sessions folder."})
                 continue
 
-            device = random.choice(DEVICE_PROFILES)
+            # Extract dynamic hardware signature profiles cleanly from our expanded array
+            device = random.choice(DEVICE_PROFILES) if DEVICE_PROFILES else {"device_model": "PC 64bit", "system_version": "Windows 11 Pro 23H2", "app_version": "5.1.0"}
+            
             client = TelegramClient(
                 str(session_path),
                 int(creds["api_id"]),
@@ -444,8 +525,17 @@ class SuiteDatabase:
 
                 session_str = StringSession.save(client.session)
                 
-                # Single execution immediately writes active data to DB1 (source_accounts)
-                self.save_migrated_session(phone, int(creds["api_id"]), str(creds["api_hash"]), session_str, device)
+                # Fetch matching 2FA password parameter from our dynamic JSON map
+                matched_2fa = twofa_map.get(clean_phone_key, None)
+                
+                # Enforce safe persistence parameters with explicit 2FA parameters mapping
+                self.save_authorized_session(
+                    phone=phone,
+                    session_str=session_str,
+                    status="active",
+                    device=device,
+                    two_fa_password=matched_2fa
+                )
                 
                 staged += 1
                 migrated += 1
