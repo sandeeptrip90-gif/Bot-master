@@ -13,6 +13,8 @@ import time
 import pathlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import uvicorn
+
 
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
@@ -215,29 +217,36 @@ async def centralized_ui_router(event):
         ]
         await event.edit(acc_center_text, buttons=acc_center_buttons)
 
-    # ==========================================
-    # 🔥 INJECT THE MISSING HANDLER HERE 🔥
-    # ==========================================
+    # =====================================================================
+    # 🔥 1. INTERACTIVE MANUAL LOGIN ROUTER ENGINE DISPATCH
+    # =====================================================================
     elif route == "action_init_login":
-        # 1. Global navigation machine filter check trigger
         ADMIN_NAV_STATE["search_query"] = "AWAITING_LOGIN_INPUT"
-        
-        # 2. Re-rendering clean interactive menu card inside client chat layout
         await event.edit(
             "📱 **Manual Account Authentication Wizard**\n\n"
-            "Follow the format\n"
+            "Kripya niche chat box mein apna full target phone number send karein.\n"
             "👉 **Format Example:** `+919430163152` ya `919430163152`",
             buttons=[[Button.inline("❌ Cancel Operations", data="nav_lvl1_accounts")]]
         )
         await event.answer()
-    # ==========================================
 
+    # =====================================================================
+    # 🛠️ 2. DIAGNOSTICS & MONITORING INTERFACE HANDLER FIXED
+    # =====================================================================
     elif route == "nav_lvl1_diag":
         diag_text = (
             "**Monitoring & Diagnostics**\n\n"
             f"{status_bar}\n"
             "System health, active processes, and infrastructure status."
         )
+        diag_buttons = [
+            [Button.inline("View Latest OTP", data="diag_otp_view"),
+             Button.inline("Intercept OTP", data="diag_otp_wait")],
+            [Button.inline("Proxy Health", data="diag_proxy_health"),
+             Button.inline("Runtime Status", data="diag_runtime_stats")],
+            [Button.inline("Back", data="nav_lvl1_main")]
+        ]
+        await event.edit(diag_text, buttons=diag_buttons)
 
     elif route == "nav_lvl1_data":
         data_text = (
@@ -1498,6 +1507,13 @@ async def system_diagnostics_snapshot(event):
     await event.reply(stats_ui)
 
 # =====================================================================
+# === FASTAPI INSTANCE DEFINITION MATRIX (MOVED ABOVE BOOTSTRAP) =====
+# =====================================================================
+BASE_DIR = Path(__file__).parent.absolute()
+app = FastAPI()
+auth_bot: 'TelegramAuthBot' = None  # set in main()
+
+# =====================================================================
 # === 9. ASYNC INITIALIZATION ENGINE BOOTSTRAP WIZARD CORE ============
 # =====================================================================
 async def main_lifecycle_bootstrap():
@@ -1512,16 +1528,15 @@ async def main_lifecycle_bootstrap():
     # 3. Mounts the autonomous active tracking background daemon worker task
     asyncio.create_task(continuous_session_auditor())
     
-    # 4. Keeps loop architecture operational securely without losing execution contexts
-    await bot.run_until_disconnected()
+    # 4. 🔥 DUAL-BOOT INTEGRATION: Run FastAPI server inside the SAME Asyncio loop safely
+    import uvicorn
+    logger.info("🌐 Spinning up Uvicorn Web Server inside Telethon Asyncio Loop...")
+    config = uvicorn.Config(app=app, host="0.0.0.0", port=8000, loop="asyncio")
+    server = uvicorn.Server(config)
+    
+    # Run server concurrently along with Telethon event loop channels
+    await server.serve()
 
-
-
-
-# === FastAPI ===
-BASE_DIR = Path(__file__).parent.absolute()
-app = FastAPI()
-auth_bot: 'TelegramAuthBot' = None  # set in main()
 
 
 # === Helper Functions ===
