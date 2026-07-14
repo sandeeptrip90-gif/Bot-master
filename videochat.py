@@ -483,21 +483,32 @@ class CloudVoiceChatEngine:
 
         self.is_running = True
         self._last_status.clear()
+        
+        # 🔍 Database core pool extraction grid
         active_pool = self.db.get_active_target_sessions()
 
         if not active_pool:
             self.is_running = False
             return "❌ **Operation Failed:** Source DB me active session nahi mila."
 
+        # 📊 LIVE REAL-TIME METRICS INJECTION (Tells you exactly how many accounts loaded)
+        total_fetched = len(active_pool)
+        print(f"[VOICECHAT] Total Active Inventory Fetched from DB: {total_fetched} accounts.", flush=True)
         print(f"[VOICECHAT] Desired Target Stream Cap Set to: `{desired_count}` accounts.", flush=True)
+        
         random.shuffle(active_pool) 
-        initial_deploy_batch = active_pool[:desired_count]
-        backup_accounts_pool = active_pool[desired_count:]
+        
+        # Enforces mathematical limits so indexing never encounters overflow parameters
+        actual_target = min(desired_count, total_fetched)
+        
+        initial_deploy_batch = active_pool[:actual_target]
+        backup_accounts_pool = active_pool[actual_target:]
 
         replacement_queue = asyncio.Queue()
         for backup_doc in backup_accounts_pool:
             await replacement_queue.put(backup_doc)
 
+        # Spawns structural streams thread connections pipeline
         for acc in initial_deploy_batch:
             if not self.is_running:
                 break
@@ -505,45 +516,55 @@ class CloudVoiceChatEngine:
             self._active_tasks.append(task)
             await asyncio.sleep(random.randint(*CONFIG["ACCOUNT_LAUNCH_DELAY"]))
 
-        return f"🚀 **Voice Chat Cluster Active Matrix Initiated:** Target set to `{desired_count}`. Active connections are streaming. Backups loaded in queue: `{replacement_queue.qsize()}` accounts."
+        return f"🚀 **Voice Chat Cluster Active Matrix Initiated:** Target set to `{actual_target}` (Total Available: `{total_fetched}`). Active connections are streaming. Backups loaded in queue: `{replacement_queue.qsize()}` accounts."
 
     def terminate_voice_cluster(self):
         """
-        🛑 BRUTE-FORCE EMERGENCY SHUTDOWN:
-        Bypass mapping errors and violently force-clear all async loops.
+        🛑 GRACEFUL EMERGENCY SHUTDOWN:
+        Properly closes WebRTC streams before dropping MTProto client connections.
         """
         if not self.is_running:
             return
             
-        print("🛑 [VOICECHAT MASTER] Emergency Shutdown Core Triggered. Brute-forcing memory purge...", flush=True)
+        print("🛑 [VOICECHAT MASTER] Shutdown Core Triggered. Initiating graceful teardown...", flush=True)
         self.is_running = False
 
-        # 1. Force Cancel all active asyncio tasks immediately
+        # 1. Cancel pending deployment tasks immediately
         for task in self._active_tasks:
             try: task.cancel()
             except: pass
         self._active_tasks.clear()
 
-        # 2. Brute-force stop PyTgCalls calls without checking internal attributes
-        for app in list(self._running_calls):
+        # 2. Create an async task to handle orderly shutdown sequence
+        async def _graceful_teardown():
+            # Step A: Hang up all PyTgCalls streams FIRST (requires active Telethon connection)
+            print("⏳ [VOICECHAT] Sending LeaveCall requests to Telegram servers...", flush=True)
+            for app in list(self._running_calls):
+                try:
+                    await app.stop()
+                except Exception:
+                    pass
+            self._running_calls.clear()
+            
+            # Step B: Give PyTgCalls background workers 2 seconds to cleanly exit their loops
+            await asyncio.sleep(2.0)
+            
+            # Step C: Now safely disconnect all Telethon MTProto clients
+            print("🔌 [VOICECHAT] Disconnecting Telegram Client Sockets...", flush=True)
+            for client in list(self._running_clients):
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+            self._running_clients.clear()
+            
+            # Step D: Release master database locks
             try:
-                # Direct force stop to bypass the UpdateGroupCall 'chat_id' attribute error
-                asyncio.create_task(app.stop())
-            except: 
-                pass
-        self._running_calls.clear()
+                self.db.release_all_locks()
+            except Exception: pass
+            
+            self._last_status.clear()
+            print("✅ [VOICECHAT MASTER] All accounts cleanly disconnected. Cluster is offline.", flush=True)
 
-        # 3. Force Disconnect Telethon clients
-        for client in list(self._running_clients):
-            try:
-                # Extract phone directly without checking session filename to avoid any object lookup errors
-                asyncio.create_task(client.disconnect())
-            except: 
-                pass
-        self._running_clients.clear()
-
-        # 4. Mandatory database lock release
-        self.db.release_all_locks() # Ensure your database.py has this method or use a loop
-        
-        self._last_status.clear()
-        print("✅ [VOICECHAT MASTER] Memory purges complete. Cluster is now offline.", flush=True)
+        # Dispatch the teardown routine without blocking the UI
+        asyncio.create_task(_graceful_teardown())

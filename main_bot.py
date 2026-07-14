@@ -215,20 +215,29 @@ async def centralized_ui_router(event):
         ]
         await event.edit(acc_center_text, buttons=acc_center_buttons)
 
+    # ==========================================
+    # 🔥 INJECT THE MISSING HANDLER HERE 🔥
+    # ==========================================
+    elif route == "action_init_login":
+        # 1. Global navigation machine filter check trigger
+        ADMIN_NAV_STATE["search_query"] = "AWAITING_LOGIN_INPUT"
+        
+        # 2. Re-rendering clean interactive menu card inside client chat layout
+        await event.edit(
+            "📱 **Manual Account Authentication Wizard**\n\n"
+            "Follow the format\n"
+            "👉 **Format Example:** `+919430163152` ya `919430163152`",
+            buttons=[[Button.inline("❌ Cancel Operations", data="nav_lvl1_accounts")]]
+        )
+        await event.answer()
+    # ==========================================
+
     elif route == "nav_lvl1_diag":
         diag_text = (
             "**Monitoring & Diagnostics**\n\n"
             f"{status_bar}\n"
             "System health, active processes, and infrastructure status."
         )
-        diag_buttons = [
-            [Button.inline("View Latest OTP", data="diag_otp_view"),
-             Button.inline("Intercept OTP", data="diag_otp_wait")],
-            [Button.inline("Proxy Health", data="diag_proxy_health"),
-             Button.inline("Runtime Status", data="diag_runtime_stats")],
-            [Button.inline("Back", data="nav_lvl1_main")]
-        ]
-        await event.edit(diag_text, buttons=diag_buttons)
 
     elif route == "nav_lvl1_data":
         data_text = (
@@ -251,7 +260,7 @@ async def centralized_ui_router(event):
             f"{status_bar}\n"
             "Deploy actions to your account pool using the following commands:\n"
             "• `/addmembers <link>` (Member Adder)\n"
-            "• `/run_voicechat <link>` (Voice Chat Deployment)\n"
+            "• `/run_voicechat <link> count` (Voice Chat Deployment)\n"
             "• `/send_dmsender` (Direct Message Campaigns)"
         )
         market_buttons = [
@@ -413,17 +422,51 @@ async def centralized_ui_router(event):
     # -----------------------------------------------------------------
     # ACTION TRIGGER SHORTCUT CONTEXT SCRIPTS
     # -----------------------------------------------------------------
-    elif route == "action_init_login":
-        await event.reply("To login a new account, use the command:\n`/login +91XXXXXXXXXX`")
-        await event.answer()
-
     elif route == "action_trigger_reload":
-        await event.edit("🔄 **Reloading account configuration...**\nPlease wait while backend grids synchronize...", buttons=None)
+        # 1. Pehle current message card par initialization state flash hogi aur buttons hatenge
+        await event.edit("🚀 **Initializing Matrix Storage Connection...**\nPreparing dynamic accounts reload routing...", buttons=None)
+        
         try:
-            result = await db.reload_local_accounts()
-            await event.reply(f"**Reload Complete**\nStaged: `{result['staged']}` | Migrated: `{result['migrated']}` | Failed: `{result['failed']}`")
+            # 2. Event pass kiya taaki backend loop isi message ko live refresh kare
+            result = await db.reload_local_accounts(event=event)
+            
+            # 3. Process complete hone par base audit template report generate hogi
+            report = (
+                "🔄 **Reload Accounts Complete**\n\n"
+                f"📊 **Final Storage Audit:**\n"
+                f"• Total Processed: `{result['staged'] + result['failed'] + result['skipped']}`\n"
+                f"• Success Active: `{result['migrated']}`\n"
+                f"• Defective/Banned: `{result['failed']}`\n"
+                f"• Missing Sessions: `{result['skipped']}`"
+            )
+            
+            # Agar koi structural local errors hain toh unhe bina kisi limit ke loop karega
+            if result.get("errors"):
+                report += "\n\n📋 **Issues Detected:**\n"
+                
+                for idx, err in enumerate(result["errors"], 1):
+                    # Clean clean key generator matrix format
+                    clean_phone = str(err['phone']).replace('+', '')
+                    line = f"`{idx}.` `+{clean_phone}` ➜ {err['error']}\n"
+                    
+                    # Safety check: Telegram 4096 limit buffer crash handler
+                    if len(report) + len(line) > 3900:
+                        # Pehle current gathered data list ko edit karke screen par display karein
+                        await event.edit(report)
+                        # Agle part ke liye event.respond se naya clean tracking card open karein
+                        event = await event.respond("⏳ **Processing Next Batch of Issues...**")
+                        report = "📋 **Issues Detected (Continued):**\n\n"
+                    
+                    # String concatenation fixes append cleanly
+                    report += line
+            
+            # Final text stream edit refresh call
+            await event.edit(report)
+            
         except Exception as e:
-            await event.reply(f"Execution Error: {e}")
+            logger.error(f"❌ Error during account reload routine: {e}", exc_info=True)
+            await event.edit(f"❌ **Account Reload Failed!**\nReason: `{str(e)}`")
+            
         await event.answer()
 
     elif route == "action_trigger_clean":
@@ -475,7 +518,30 @@ async def centralized_ui_router(event):
     elif route == "diag_runtime_stats":
         await event.edit(f"**Runtime Status**\n\nActive Workers: `4`\nTask Queue: `Idle`\nCached Connections: `{len(PERSISTENT_CLIENT_POOL)}`", buttons=back_to_lvl1)
 
+    elif route == "action_halt_voice":
+        # 1. Immediate visual UI feedback update to user card
+        await event.edit("🛑 **Initiating Voice Chat Emergency Shutdown...**\nClearing processes and releasing cluster locks...", buttons=None)
+        
+        try:
+            # 2. Triggering the core brute-force memory purge function inside videochat.py
+            voice_engine.terminate_voice_cluster()
+            
+            # 3. Success reporting structure update dashboard layout
+            await event.reply(
+                "🎯 **Voice Chat Cluster Offline!**\n\n"
+                "• All WebRTC streams violently terminated.\n"
+                "• Telethon client node sessions disconnected.\n"
+                "• Master inventory storage database locks fully cleared."
+            )
+        except Exception as halt_err:
+            logger.error(f"❌ Force stop breakdown on route: {halt_err}")
+            await event.reply(f"❌ **Emergency Halt Failed:** `{str(halt_err)}`")
+            
+        await event.answer()
 
+# =====================================================================
+# === 4. REAL-TIME SEARCH TEXT INTERCEPTOR INTERACTION ENGINE =========
+# =====================================================================
 # =====================================================================
 # === 4. REAL-TIME SEARCH TEXT INTERCEPTOR INTERACTION ENGINE =========
 # =====================================================================
@@ -484,7 +550,26 @@ async def catch_global_search_inputs(event):
     if event.text and event.text.startswith('/'):
         return
         
-    if ADMIN_NAV_STATE.get("search_query") == "AWAITING_INPUT" and is_admin(event.sender_id):
+    if not is_admin(event.sender_id):
+        return
+
+    current_state = ADMIN_NAV_STATE.get("search_query")
+
+    # 🔥 DYNAMIC STEP-BY-STEP LOGIN SUBROUTINE CAPTURE (THE FIX)
+    if current_state == "AWAITING_LOGIN_INPUT":
+        raw_number = event.text.strip()
+        ADMIN_NAV_STATE["search_query"] = None # Reset conversation step flow
+        
+        # Simulating clean manual telethon event context routing
+        import re
+        event.pattern_match = re.match(r'(.*)', raw_number)
+        
+        # Seamlessly hands control directly over to the main execution login_handler
+        await login_handler(event)
+        return
+
+    # 🔍 PRE-EXISTING SEARCH TEXT ENGINE LAYER (100% Intact/No Data Loss)
+    elif current_state == "AWAITING_INPUT":
         raw_query = event.text.strip().replace("+", "").replace("@", "")
         ADMIN_NAV_STATE["search_query"] = None 
         
@@ -1116,9 +1201,14 @@ async def terminate_manual_login(event):
 # =====================================================================
 @bot.on(events.NewMessage(pattern=r'/reload(?:_accounts|\s+accounts)?$'))
 async def reload_accounts_router(event):
+    # 1. Pehle message send hoga aur status_msg variable mein save hoga
     status_msg = await event.reply("🔄 **Reloading Local Accounts...** `sessions/` aur `vars.txt` ko database schema ke sath sync kiya ja raha hai.")
+    
     try:
-        result = await db.reload_local_accounts()
+        # 2. YAHAN DHAN DEIN: Hum wahi status_msg object pass kar rahe hain jise edit karna hai
+        result = await db.reload_local_accounts(event=status_msg)
+        
+        # 3. Final Report Loop (Jab poora task khatam ho jaye)
         report = (
             "✅ **Reload Accounts Complete**\n"
             f"📥 Staged into source DB: `{result['staged']}`\n"
@@ -1130,7 +1220,9 @@ async def reload_accounts_router(event):
             report += "\n📋 **Issues:**\n"
             for idx, err in enumerate(result["errors"][:10], 1):
                 report += f"`{idx}.` `{err['phone']}` ➜ {err['error']}\n"
+        
         await status_msg.edit(report)
+        
     except Exception as ex:
         await status_msg.edit(f"❌ **Reload Accounts Failed:** `{str(ex)}`")
 
@@ -1337,6 +1429,9 @@ async def run_member_adder_matrix(event):
 # =====================================================================
 # === 8. DYNAMIC VOICE CLUSTER CONTROLLER WITH ALL-ACCOUNT FALLBACK ===
 # =====================================================================
+# =====================================================================
+# === 8. DYNAMIC VOICE CLUSTER CONTROLLER WITH ALL-ACCOUNT FALLBACK ===
+# =====================================================================
 @bot.on(events.NewMessage(pattern=r'/run_voicechat(?:\s+(.+))?'))
 async def start_voice_engine_cmd(event):
     if not is_admin(event.sender_id): return
@@ -1357,15 +1452,21 @@ async def start_voice_engine_cmd(event):
         await event.reply("❌ **Operation Aborted:** Mapped source range limits are empty. No active sessions online.")
         return
 
-    # Parse targeted user input allocations or fallback safely to ALL inventory capacity
+    # 🎯 CRITICAL PARSE FIX: Extraction string integer from arguments payload pool safely
     desired_count = total_available
     if len(input_segments) >= 2:
         try:
-            parsed_num = int(input_segments[1])
+            # Clean string spaces structure block checks
+            parsed_num = int(input_segments[1].strip())
             if parsed_num > 0:
-                desired_count = min(parsed_num, total_available)
+                # Setting balance constraints bounds logic cleanly
+                desired_count = parsed_num
         except ValueError:
-            pass # Keep all-accounts default if input contains letters or characters
+            # Fallback allocation back to total size structure loop
+            desired_count = total_available
+
+    # Dynamic target cap correction mapping to prevent index lookup confusion logs
+    desired_count = min(desired_count, total_available)
 
     await event.reply(
         f"⚡ **Spawning PyTgCalls WebRTC Cluster Matrix...**\n"

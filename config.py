@@ -29,7 +29,7 @@ CONFIG = {
     "WORKER_NODE_ID": os.environ.get("WORKER_NODE_ID", "worker_01"),
     
     # Define exact batch sequence range nodes allocation boundaries
-    "BATCH_SEQUENCE_START": int(os.environ.get("BATCH_START", 1)),
+    "BATCH_SEQUENCE_START": int(os.environ.get("BATCH_START", 0)),
     "BATCH_SEQUENCE_END": int(os.environ.get("BATCH_END", 250)),
     
     # Standard Connection Timing Configuration (In Seconds)

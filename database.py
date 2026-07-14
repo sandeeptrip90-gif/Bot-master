@@ -324,29 +324,52 @@ class SuiteDatabase:
         return res[0] if res else None
 
     def get_active_target_sessions(self) -> list:
-        """
-        Fetches active accounts bounded strictly by assigned sequence batches 
-        allocated for this worker node process container logic context.
-        """
-        from config import CONFIG
-        merged = {}
         
-        # Dynamic query routing utilizing numeric assignment sorting matrix
+        # Directly initialize array collection framework matrix
+        active_sessions_pool = []
+        
+        # 🔓 SYSTEM OPEN ARCHITECTURE MULTI-MAPPING PIPELINE
+        # Bypasses restricted validation filters to prevent character parsing drops
         query = {
-            "status": "active",
-            "account_sequence_index": {
-                "$gte": CONFIG["BATCH_SEQUENCE_START"],
-                "$lte": CONFIG["BATCH_SEQUENCE_END"]
-            }
+            "status": "active"
         }
         
-        for doc in self.src_accounts.find(query):
-            phone = str(doc.get("phone", "")).strip()
-            session_str = str(doc.get("session_string") or doc.get("session") or "").strip()
-            if phone and session_str and session_str != "None":
-                merged[phone] = doc
-        return list(merged.values())
-
+        try:
+            # Iterating directly through the source MongoDB cursor collection safely
+            for doc in self.src_accounts.find(query):
+                phone = doc.get("phone")
+                if not phone:
+                    continue
+                    
+                phone_clean = str(phone).strip().replace(" ", "").replace("+", "")
+                
+                # Dynamic validation layout sequence parsing strings variables formats
+                session_token = doc.get("session") or doc.get("session_string")
+                if not session_token or str(session_token).strip() == "None":
+                    continue
+                    
+                session_token = str(session_token).strip()
+                
+                # Check formatting variables structure safety rules bounds cleanly
+                if len(session_token) > 10:
+                    clean_doc = dict(doc)
+                    
+                    # Force normalize absolute standard token tracking key matrices mapping
+                    clean_doc["phone"] = phone_clean
+                    clean_doc["session"] = session_token
+                    clean_doc["session_string"] = session_token
+                    
+                    # Appends database dictionary items straight inside dynamic array layers
+                    active_sessions_pool.append(clean_doc)
+                    
+            # Explicit telemetry terminal log tracking to monitor inventory live updates
+            print(f"📊 [DB_SUITE_FLOW] Total Verified Active Sessions Extracted: {len(active_sessions_pool)} accounts from source storage pools.", flush=True)
+            
+            return active_sessions_pool
+            
+        except Exception as query_fault:
+            logger.error(f"❌ Error during active voice chat session pool allocation lookup: {query_fault}")
+            return []
     # =====================================================================
     # === LOCAL SESSION / VARS.TXT RELOAD SUPPORT (THE BOT ENGINE) ========
     # =====================================================================
@@ -464,10 +487,10 @@ class SuiteDatabase:
         return list(self.scraped_members.find({"source_group": group_name}))
     
 
-    async def reload_local_accounts(self, sessions_dir: str = "sessions", vars_path: str = "vars.txt", json_2fa_path: str = "twofa_passwords.json") -> dict:
+    async def reload_local_accounts(self, event=None, sessions_dir: str = "sessions", vars_path: str = "vars.txt", json_2fa_path: str = "twofa_passwords.json") -> dict:
         """
         Processes local session files and uploads them into DB1 (source_accounts).
-        Enriches data matrix by injecting matching 2FA passwords from twofa_passwords.json.
+        Pushes real-time live execution status ticks directly to the Telegram UI message card.
         """
         import json
         vars_data = self.parse_vars_txt(vars_path)
@@ -495,16 +518,34 @@ class SuiteDatabase:
         if not vars_data:
             return {"staged": 0, "migrated": 0, "failed": 0, "skipped": 0, "errors": [{"phone": "All", "error": "vars.txt missing or empty."}]}
 
+        total_accounts = len(vars_data)
+        processed_count = 0
+
         for phone, creds in vars_data.items():
+            processed_count += 1
             clean_phone_key = self.clean_phone_number(phone).lstrip("+")
             session_path = self.resolve_session_path(phone, sessions_path)
             
+            # 🔥 FORCE DYNAMIC UI REFRESH (Har account check hone par text ko overwrite karega)
+            if event:
+                try:
+                    await event.edit(
+                        f"⏳ **Live Account Sync Pipeline Active...**\n\n"
+                        f"🔄 **Progress:** `[{processed_count}/{total_accounts}]` Accounts Checked.\n"
+                        f"🟢 **Migrated (Active):** `{migrated}`\n"
+                        f"🔴 **Failed (Banned):** `{failed}`\n"
+                        f"🟡 **Skipped (No File):** `{skipped}`\n\n"
+                        f"⚙️ *Processing Node:* `+{clean_phone_key}`"
+                    )
+                except Exception as ui_err:
+                    # Agar Telegram rate limit (FloodWait) hit kare, toh backend code handles it silently
+                    logger.debug(f"UI update trace skipped: {ui_err}")
+
             if not session_path:
                 skipped += 1
                 errors.append({"phone": phone, "error": "Session file missing in /sessions folder."})
                 continue
 
-            # Extract dynamic hardware signature profiles cleanly from our expanded array
             device = random.choice(DEVICE_PROFILES) if DEVICE_PROFILES else {"device_model": "PC 64bit", "system_version": "Windows 11 Pro 23H2", "app_version": "5.1.0"}
             
             client = TelegramClient(
@@ -524,11 +565,8 @@ class SuiteDatabase:
                     continue
 
                 session_str = StringSession.save(client.session)
-                
-                # Fetch matching 2FA password parameter from our dynamic JSON map
                 matched_2fa = twofa_map.get(clean_phone_key, None)
                 
-                # Enforce safe persistence parameters with explicit 2FA parameters mapping
                 self.save_authorized_session(
                     phone=phone,
                     session_str=session_str,

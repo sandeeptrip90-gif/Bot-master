@@ -1,37 +1,43 @@
 # =====================================================================
-# CORE TELEGRAM GATEWAY PIPELINES
+# 1. CORE TELEGRAM GATEWAY PIPELINES
 # =====================================================================
-# Stable MTProto client network protocol framework for managing mass parallel worker routing
-Telethon>=1.35.0
+Telethon>=1.33.0
 
 # =====================================================================
-# WEBRTC AUDIO TRANSMISSION NETWORKING
+# 2. WEBRTC AUDIO TRANSMISSION NETWORKING
 # =====================================================================
-# Native WebRTC pipeline interface bindings compatible with standard Telethon instances
-pytgcalls>=3.0.0.6
-# PyTgCalls specific media codec abstractions and structural transmission grids
-pytgcalls-pure>=1.0.0
+# Native WebRTC pipeline interface
+pytgcalls>=3.0.0
+ntgcalls>=1.0.0
 
 # =====================================================================
-# STORAGE DATABASES ECOSYSYTEM LINKS
+# 3. STORAGE DATABASES ECOSYSYTEM LINKS
 # =====================================================================
-# Native multi-thread thread-safe driver communication gateway link for MongoDB Atlas architectures
+# Native multi-thread gateway for MongoDB Atlas
 pymongo>=4.6.0
-# Core cryptographically secure DNS connection handshake tools for network protocol endpoints
-dnspython>=2.6.0
+# Core DNS connection handshake tools for MongoDB +srv endpoints
+dnspython>=2.4.0
 
 # =====================================================================
-# MEDIA TRANSMISSION INTEGRATION COEFFICIENTS
+# 4. WEB SERVER & API ENDPOINTS (REQUIRED FOR MAIN_BOT.PY)
 # =====================================================================
-# Operating System level binary parsing tools used by PyTgCalls framework internally for handling raw audio streams
-cryptography>=42.0.0
-PyJWT>=2.8.0
+# Missing in old list but strictly required for API execution
+fastapi>=0.109.0
+pydantic>=2.5.0
+uvicorn>=0.27.0
+python-multipart>=0.0.9
 
 # =====================================================================
-# NETWORKING COMPONENT COEFFICIENTS (PROXIES FRAMEWORK)
+# 5. NETWORKING & PROXIES FRAMEWORK
 # =====================================================================
-# SOCKS5 structural resolution layers handling outbound traffic signatures safely
+# SOCKS5 structural resolution layers handling outbound traffic
 pysocks>=1.7.1
-# Asynchronous secure request libraries used internally inside the SuiteProxyManager validation routines
+# Asynchronous secure request libraries
 aiohttp>=3.9.0
 certifi>=2024.2.2
+
+# =====================================================================
+# 6. MEDIA TRANSMISSION INTEGRATION COEFFICIENTS
+# =====================================================================
+cryptography>=41.0.0
+PyJWT>=2.8.0
