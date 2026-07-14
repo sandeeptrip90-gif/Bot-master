@@ -20,9 +20,10 @@ from telethon.tl.types import (
     UserStatusOnline, UserStatusRecently, UserStatusLastWeek,
     UserStatusLastMonth, PeerChannel, ChannelParticipantsSearch
 )
-from telethon.tl.functions.channels import JoinChannelRequest, GetParticipantsRequest
-from telethon.tl.functions.messages import ImportChatInviteRequest, GetHistoryRequest
+from telethon.tl.functions.channels import JoinChannelRequest, GetParticipantsRequest, GetFullChannelRequest
+from telethon.tl.functions.messages import ImportChatInviteRequest, GetHistoryRequest, GetFullChatRequest
 from telethon.errors import FloodWaitError, ChatAdminRequiredError, UserAlreadyParticipantError
+from telethon.tl.functions.phone import GetGroupParticipantsRequest
 
 from config import CONFIG, DEVICE_PROFILES
 
@@ -265,8 +266,14 @@ class MemberScraper:
                 await asyncio.sleep(0.1)
                 
             # Parse active live call arrays
+            # Parse active live call arrays
             try:
-                full_chat_context = await client.get_full_channel(entity)
+                # Dynamically evaluate if entity is a Megagroup/Channel or standard Chat
+                if type(entity).__name__ == 'Channel':
+                    full_chat_context = await client(GetFullChannelRequest(entity))
+                else:
+                    full_chat_context = await client(GetFullChatRequest(entity.id))
+                    
                 if full_chat_context.full_chat.call and hasattr(full_chat_context.full_chat.call, 'participants'):
                     print(f"  🎥 Live Voicechat stream framework matching active instances...")
                     for participant in full_chat_context.full_chat.call.participants:
@@ -303,6 +310,95 @@ class MemberScraper:
             
         except Exception as e:
             logger.error(f"Hidden compiler structural failure occurred: {e}")
+            return 0
+        finally:
+            await client.disconnect()
+            self.db.release_lock(phone)  # 🔓 Safe release when done
+            
+    async def scrape_voicechat_matrix(self, account_doc: Dict, group_link: str) -> int:
+        """Scans the active live Voice Chat (Group Call) to extract all currently connected members."""
+        phone = str(account_doc.get("phone", ""))
+        self.db.acquire_lock(phone)  # 🔒 Lock before VC scraping starts
+
+        session_str = account_doc.get("session_string") or account_doc.get("session")
+        device = account_doc.get("device_metadata") or random.choice(DEVICE_PROFILES)
+        
+        client = TelegramClient(
+            StringSession(session_str), 
+            int(account_doc.get("api_id", CONFIG["API_ID"])), 
+            str(account_doc.get("api_hash", CONFIG["API_HASH"])),
+            device_model=device.get("device_model", "PC 64bit"),
+            system_version=device.get("system_version", "Windows 11"),
+            app_version=device.get("app_version", "4.8.4")
+        )
+        
+        try:
+            await client.connect()
+            entity = await self._bind_and_join(client, group_link)
+            group_title = getattr(entity, 'title', 'VC Scraped Group')
+            
+            print("  🎙️ Checking for an active Voice Chat in the target group...")
+            
+            # 🔥 FIX: Safely fetch the full chat context using native Telethon APIs to avoid AttributeError
+            from telethon.tl.functions.channels import GetFullChannelRequest
+            from telethon.tl.functions.messages import GetFullChatRequest
+
+            if type(entity).__name__ == 'Channel':
+                full_chat_context = await client(GetFullChannelRequest(entity))
+            else:
+                full_chat_context = await client(GetFullChatRequest(entity.id))
+                
+            call_obj = full_chat_context.full_chat.call
+            
+            if not call_obj:
+                print("  ❌ No active Voice Chat found in this group.")
+                return 0
+                
+            print("  🎧 Active Voice Chat detected! Extracting live participants...")
+            
+            users_map: Dict[int, Any] = {}
+            offset = ""
+            
+            while True:
+                try:
+                    # Fetch participants from the active group call
+                    from telethon.tl.functions.phone import GetGroupParticipantsRequest
+                    result = await client(GetGroupParticipantsRequest(
+                        call=call_obj,
+                        ids=[],
+                        sources=[],
+                        offset=offset,
+                        limit=100
+                    ))
+                    
+                    for user in result.users:
+                        if not getattr(user, 'bot', False) and user.id:
+                            users_map[user.id] = user
+                            
+                    if not result.next_offset:
+                        break
+                    offset = result.next_offset
+                    await asyncio.sleep(0.5)  # Safe delay to prevent rate limits
+                    
+                except Exception as api_err:
+                    print(f"  ⚠️ Voice chat extraction pagination error: {api_err}")
+                    break
+
+            hidden_payloads = []
+            for usr in users_map.values():
+                act = self._determine_activity_status(usr)
+                hidden_payloads.append(self._convert_user_to_dict(usr, act, group_title))
+                
+            if hidden_payloads:
+                upsert_count = self.db.save_scraped_members(hidden_payloads, group_title)
+                print(f"  ✅ VoiceChat Matrix Complete. Processed {upsert_count} live participants.")
+                return upsert_count
+            else:
+                print("  📭 Voice chat is active, but no visible participants found.")
+                return 0
+            
+        except Exception as e:
+            logger.error(f"VoiceChat extraction structural failure occurred: {e}")
             return 0
         finally:
             await client.disconnect()

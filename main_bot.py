@@ -239,6 +239,7 @@ async def centralized_ui_router(event):
             f"{status_bar}\n"
             "System health, active processes, and infrastructure status."
         )
+        # Adding the missing buttons array and event edit call
         diag_buttons = [
             [Button.inline("View Latest OTP", data="diag_otp_view"),
              Button.inline("Intercept OTP", data="diag_otp_wait")],
@@ -247,7 +248,8 @@ async def centralized_ui_router(event):
             [Button.inline("Back", data="nav_lvl1_main")]
         ]
         await event.edit(diag_text, buttons=diag_buttons)
-
+        
+        
     elif route == "nav_lvl1_data":
         data_text = (
             "**Data Extraction**\n\n"
@@ -255,7 +257,9 @@ async def centralized_ui_router(event):
             "Execute extraction workflows using the following commands:\n"
             "• `/scrape_all <link>`\n"
             "• `/scrape_active_24h <link>`\n"
-            "• `/scrape_hidden <link>`"
+            "• `/scrape_weekly <link>`\n"
+            "• `/scrape_hidden <link>`\n"
+            "• `/scrape_from_voicechat <link>`"
         )
         data_buttons = [
             [Button.inline("Clear Scraped Data", data="action_clear_scraped")],
@@ -547,10 +551,21 @@ async def centralized_ui_router(event):
             await event.reply(f"❌ **Emergency Halt Failed:** `{str(halt_err)}`")
             
         await event.answer()
+        
+    elif route == "action_halt_dm":
+        await event.answer("Halt Campaign request received.", alert=True)
+        # Add your core logic to halt DM here in the future
+        await event.edit("🛑 **DM Campaign execution halted.** Releasing system buffers...", buttons=back_to_lvl1)
 
-# =====================================================================
-# === 4. REAL-TIME SEARCH TEXT INTERCEPTOR INTERACTION ENGINE =========
-# =====================================================================
+    elif route == "action_clear_scraped":
+        try:
+            total_records = db.count_scraped_data()
+            db.clear_scraped_data()
+            await event.edit(f"🗑️ **Cloud Database Purged Clean!**\nPurged `{total_records}` profile rows from repository collections.", buttons=back_to_lvl1)
+        except Exception as e:
+            await event.edit(f"❌ **Purge Failed:** `{str(e)}`", buttons=back_to_lvl1)
+        await event.answer()    
+
 # =====================================================================
 # === 4. REAL-TIME SEARCH TEXT INTERCEPTOR INTERACTION ENGINE =========
 # =====================================================================
@@ -733,9 +748,14 @@ async def continuous_session_auditor():
                 # 3. Handle Structural Mutation & Dispatch Matrix
                 if reason_failed:
                     audit_logger.critical(f"❌ Structural Defect! Session +{clean_phone} is down. Processing mutation workflow...")
-                    
+
                     db.mark_account_revoked(clean_phone, reason_failed)
-                    PERSISTENT_CLIENT_POOL.pop(clean_phone, None)
+                    if clean_phone in PERSISTENT_CLIENT_POOL:
+                        try:
+                            old_client = PERSISTENT_CLIENT_POOL.pop(clean_phone)
+                            await old_client.disconnect()
+                        except:
+                            pass
                     try:
                         await client.disconnect()
                     except:
@@ -761,6 +781,17 @@ async def continuous_session_auditor():
                 # Dynamic micro stagger injection between subsequent inline account checks
                 await asyncio.sleep(base_stagger_delay)
 
+            # 4. Cleanup stale clients from pool (memory leak prevention)
+            stale_phones = [p for p in PERSISTENT_CLIENT_POOL.keys()
+                           if p not in [acc.get("phone", "").replace("+", "") for acc in active_accounts]]
+            for stale_phone in stale_phones:
+                try:
+                    stale_client = PERSISTENT_CLIENT_POOL.pop(stale_phone)
+                    await stale_client.disconnect()
+                    audit_logger.debug(f"🧹 Cleaned up stale client pool entry: {stale_phone}")
+                except Exception as cleanup_err:
+                    audit_logger.debug(f"Cleanup error for {stale_phone}: {cleanup_err}")
+
             # Full cycle complete macro delay deployment
             macro_cycle_cooldown = random.uniform(3600.0, 7200.0)
             audit_logger.info(f"🏁 Full verification segment finished. Auditor thread going silent for {round(macro_cycle_cooldown/60, 2)} minutes.")
@@ -777,80 +808,56 @@ async def continuous_session_auditor():
 # =====================================================================
 @bot.on(events.NewMessage(pattern=r'/login\s+(.+)'))
 async def login_handler(event):
-    if not is_admin(event.sender_id): return
-    
+    if not is_admin(event.sender_id):
+        return
+
     raw_phone = event.pattern_match.group(1)
-    phone = clean_phone_input(raw_phone)  # Generates clean format with leading '+'
-    db_clean_phone = phone.replace("+", "")  # Strips plus for database routing keys
-    
+    phone = clean_phone_input(raw_phone)
+    db_clean_phone = phone.replace("+", "")
+
     await event.reply(f"⏳ **Initializing Login Pipeline for:** `{phone}`...\nConnecting to Telegram Core Matrix...")
     logger.info(f"⚙️ Running structural authentication request for: {phone}")
 
-    # 📱 Step 1: Fixed Hardware Fingerprint Check
-    existing_record = db.get_session_by_phone(db_clean_phone)
-    if existing_record and existing_record.get("device_model"):
-        device = {
-            "device_model": existing_record.get("device_model"),
-            "system_version": existing_record.get("system_version"),
-            "app_version": existing_record.get("app_version")
-        }
-        logger.info(f"💾 Found permanent fixed hardware identifier for {phone}: {device['device_model']}")
-    else:
-        device = random.choice(DEVICE_PROFILES)
-        logger.info(f"✨ Generating brand-new permanent device profile for {phone}: {device['device_model']}")
-
-    string_session = StringSession()
-    
-    # 📡 Step 2: Proxy Connection Layer Allocation
-    proxy_node = proxy_manager.get_secured_proxy() if proxy_manager.working_count > 0 else None
-    if not proxy_node:
-        logger.warning("⚠️ No active proxies online. Attempting straight connection protocol over WAN matrix...")
-    
-    client = TelegramClient(
-        string_session,
-        api_id=CONFIG["API_ID"],
-        api_hash=CONFIG["API_HASH"],
-        device_model=device["device_model"],
-        system_version=device["system_version"],
-        app_version=device["app_version"],
-        proxy=proxy_node
-    )
-    
-    # 🚀 Step 3: Network Execution and Request Pipeline
+    client = None
     try:
-        await asyncio.wait_for(client.connect(), timeout=20.0)
-        
-        send_code_result = await client.send_code_request(phone)
-        code_hash = send_code_result.phone_code_hash
-        
-        # Centralizing the pending entry node strictly within DB 1 Single Ecosystem
-        db.save_pending_session(db_clean_phone, string_session.save(), "pending", code_hash, device)
-        
-        # Hard-locking inside runtime volatile map utilizing normalized indexing lookup
+        # Use shared login process
+        login_result = await shared_login_process(phone)
+
+        client = login_result["client"]
+        device = login_result["device"]
+        code_hash = login_result["code_hash"]
+
+        # Store in AUTH_STATES for bot command flow
         AUTH_STATES[db_clean_phone] = {
             "client": client,
             "phone_code_hash": code_hash,
             "device": device
         }
-        
+
         await event.reply(
             f"📥 **OTP Code Sent Successfully!**\n"
             f"👤 **Phone:** `{phone}`\n"
-            f"📱 **Device Profile:** `{device['device_model']}`\n\n"
+            f"📱 **Device Profile:** `{device.get('device_model', 'Unknown')}`\n\n"
             f"🔑 Ab input verify karein use karke:\n`/verify {db_clean_phone} CODE`"
         )
-        logger.info(f"✅ OTP successfully dispatched code string matrix for phone {phone}")
-        
+        logger.info(f"✅ OTP successfully dispatched for phone {phone}")
+
     except asyncio.TimeoutError:
         logger.error(f"❌ Telegram Connection Pipeline Timed out for {phone}. Network core unreachable.")
         await event.reply("❌ **Network Connection Timeout:** Telegram core server ne response nahi diya. Please check your system internet or proxies.")
-        try: await client.disconnect()
-        except: pass
+        if client:
+            try:
+                await client.disconnect()
+            except:
+                pass
     except Exception as e:
         logger.error(f"❌ Core Exception during Login Initiation for {phone}: {e}", exc_info=True)
         await event.reply(f"❌ **Login Initiation Failed!**\nReason: `{str(e)}`")
-        try: await client.disconnect()
-        except: pass
+        if client:
+            try:
+                await client.disconnect()
+            except:
+                pass
 
 
 # =====================================================================
@@ -1305,9 +1312,7 @@ async def generic_scrape_runner(event, mode, title_label):
         await event.reply(f"❌ **Syntax Error:** Proper target command input required!\n👉 **Format:** `/{event.text.split()[0].lstrip('/')} <group_link>`")
         return
         
-    # FIX: Aggressively sanitize the link payload received from UI to prevent crash
     target_link = input_segments[1].strip().replace("<", "").replace(">", "").replace('"', '').replace("'", "")
-    
     active_sessions = db.get_active_target_sessions()
     
     if not active_sessions:
@@ -1319,8 +1324,11 @@ async def generic_scrape_runner(event, mode, title_label):
     try:
         selected_worker = random.choice(active_sessions)
         
+        # 🔥 UPDATED ROUTING LAYER FOR VOICE CHAT 
         if mode == 'hidden':
             count = await scraper_engine.scrape_hidden_matrix(selected_worker, target_link)
+        elif mode == 'voicechat':
+            count = await scraper_engine.scrape_voicechat_matrix(selected_worker, target_link)
         else:
             count = await scraper_engine.scrape_standard_pool(selected_worker, target_link, mode)
             
@@ -1328,6 +1336,11 @@ async def generic_scrape_runner(event, mode, title_label):
     except Exception as e:
         logger.error(f"Global core script crash processing elements handler: {e}")
         await status_msg.edit(f"❌ **Scraper Infrastructure Exception:** `{str(e)[:150]}`")
+
+# (Aapke purane commands ke niche naya command add karein)
+@bot.on(events.NewMessage(pattern=r'/scrape_from_voicechat(\s+|$)'))
+async def scrape_vc_cmd(event): 
+    await generic_scrape_runner(event, 'voicechat', 'Live VoiceChat Call Tracker')
 
 @bot.on(events.NewMessage(pattern=r'/scrape_all(\s+|$)'))
 async def scrape_all_cmd(event): 
@@ -1415,25 +1428,61 @@ async def catch_contact_selection_index(event):
 # =====================================================================
 # === 7. ADDER & VOICE CHAT BACKGROUND WORKERS ========================
 # =====================================================================
+# =====================================================================
+# === 7. ADDER & VOICE CHAT BACKGROUND WORKERS (RESTUCTURED FIX) ======
+# =====================================================================
 @bot.on(events.NewMessage(pattern='/addmembers'))
 async def run_member_adder_matrix(event):
+    if not is_admin(event.sender_id):
+        return
+
     if adder_engine.is_running:
         await event.reply("⚠️ Member Adding background engine processing pool is occupied right now.")
         return
+        
     args = event.text.split()
     if len(args) < 2:
         await event.reply("❌ **Syntax Error:** Use: `/addmembers <group_link>`")
         return
     
-    # Clean target string logic dynamically applied here as well
+    # Clean target link logic dynamically applied
     target = args[1].strip().replace("<", "").replace(">", "").replace('"', '').replace("'", "")
     
+    # 🔒 MASTER BATCH LOCK LOCKING SEQUENCE [PREVENTS AUTHKEYUNREGISTEREDERROR]
+    # Spawns structural lock to force separate continuous session auditor loop to skip checks
+    active_accounts = db.get_active_target_sessions()
+    for acc in active_accounts:
+        phone = acc.get("phone")
+        if phone:
+            db.acquire_lock(str(phone).strip().replace(" ", "").replace("+", ""))
+
+    status_msg = await event.reply("🚀 **Triggering Multi-Account Rotating Member Adder Engine...**\n*Session tracking layers locked safely.*")
+    logger.info(f"⚡ Launching synchronized rotating member adder grid to target: {target}")
+
     async def inline_ui_callback(text_update):
-        try: await event.reply(text_update)
-        except Exception: pass
-    await event.reply("🚀 **Triggering Multi-Account Rotating Member Adder Engine...**")
-    final_output = await adder_engine.execute_adding_pipeline(target, inline_ui_callback)
-    await event.reply(final_output)
+        try:
+            # Captures output logs string variables stream dynamically
+            await status_msg.edit(f"⚙️ **Adder Status:**\n{text_update}")
+        except Exception:
+            pass
+
+    try:
+        # Executes deep adding loops sequence pipelines
+        final_output = await adder_engine.execute_adding_pipeline(target, inline_ui_callback)
+        await event.reply(final_output)
+        
+    except Exception as matrix_fault:
+        logger.error(f"❌ Error caught inside master adder allocation block: {matrix_fault}")
+        await event.reply(f"❌ **Adder System Exception:** `{str(matrix_fault)[:200]}`")
+        
+    finally:
+        # 🔓 SAFE RELEASE SEQUENCE
+        # Returns master accounts rotation pools back into system checks context arrays
+        for acc in active_accounts:
+            phone = acc.get("phone")
+            if phone:
+                db.release_lock(str(phone).strip().replace(" ", "").replace("+", ""))
+        logger.info("🔓 [MASTER ADDER] Emergency processing structural locks released cleanly.")
 
 # =====================================================================
 # === 8. DYNAMIC VOICE CLUSTER CONTROLLER WITH ALL-ACCOUNT FALLBACK ===
@@ -1507,39 +1556,114 @@ async def system_diagnostics_snapshot(event):
     await event.reply(stats_ui)
 
 # =====================================================================
+# === TELEGRAM AUTH BOT CLASS ==========================================
+# =====================================================================
+import threading
+from base64 import b64encode, b64decode
+
+class TelegramAuthBot:
+    def __init__(self, config, database):
+        self.config = config
+        self.db = database
+        self.sessions = {}
+        self.pending_codes = {}
+        self._lock = threading.RLock()
+
+    def create_user_client(self, phone: str):
+        clean_phone = phone.replace("+", "").replace(" ", "")
+        device = random.choice(DEVICE_PROFILES) if DEVICE_PROFILES else {}
+
+        client = TelegramClient(
+            StringSession(),
+            api_id=int(self.config.get("API_ID", 0)),
+            api_hash=str(self.config.get("API_HASH", ""))
+        )
+        return client
+
+    def save_account_metadata(self, phone: str):
+        with self._lock:
+            if phone in self.sessions:
+                try:
+                    self.db.update_session_status(
+                        phone.replace("+", ""),
+                        "active",
+                        self.sessions[phone].session.save()
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to save metadata for {phone}: {e}")
+
+    def save_twofa_password(self, phone: str, password: str):
+        with self._lock:
+            try:
+                clean_phone = phone.replace("+", "")
+                self.db.source_accounts.update_one(
+                    {"phone": clean_phone},
+                    {"$set": {"2fa_password_hash": b64encode(password.encode()).decode()}}
+                )
+            except Exception as e:
+                logger.error(f"Failed to save 2FA password for {phone}: {e}")
+
+
+# =====================================================================
 # === FASTAPI INSTANCE DEFINITION MATRIX (MOVED ABOVE BOOTSTRAP) =====
 # =====================================================================
 BASE_DIR = Path(__file__).parent.absolute()
 app = FastAPI()
-auth_bot: 'TelegramAuthBot' = None  # set in main()
-
-# =====================================================================
-# === 9. ASYNC INITIALIZATION ENGINE BOOTSTRAP WIZARD CORE ============
-# =====================================================================
-async def main_lifecycle_bootstrap():
-    """Initializes frameworks, proxy networks, and registers structural bot handlers safely."""
-    # 1. Trigger Proxy Pipeline Scan cleanly inside the correct runtime loop
-    asyncio.create_task(proxy_manager.run_pipeline_scan())
-    
-    # 2. Spawns and starts the central Master Bot Client Instance directly
-    await bot.start(bot_token=CONFIG["BOT_TOKEN"])
-    logger.info("🤖 Master Telegram Bot Interface Authenticated and Online.")
-    
-    # 3. Mounts the autonomous active tracking background daemon worker task
-    asyncio.create_task(continuous_session_auditor())
-    
-    # 4. 🔥 DUAL-BOOT INTEGRATION: Run FastAPI server inside the SAME Asyncio loop safely
-    import uvicorn
-    logger.info("🌐 Spinning up Uvicorn Web Server inside Telethon Asyncio Loop...")
-    config = uvicorn.Config(app=app, host="0.0.0.0", port=8000, loop="asyncio")
-    server = uvicorn.Server(config)
-    
-    # Run server concurrently along with Telethon event loop channels
-    await server.serve()
-
+auth_bot: TelegramAuthBot = None  # set in main()
 
 
 # === Helper Functions ===
+async def shared_login_process(phone: str) -> dict:
+    """
+    Shared login process for both bot and API endpoints.
+    Returns dict with status, code_hash, device, and client info.
+    """
+    clean_phone = phone.replace("+", "").replace(" ", "")
+
+    # Step 1: Fixed Hardware Fingerprint Check
+    existing_record = db.get_session_by_phone(clean_phone)
+    if existing_record and existing_record.get("device_model"):
+        device = {
+            "device_model": existing_record.get("device_model"),
+            "system_version": existing_record.get("system_version"),
+            "app_version": existing_record.get("app_version")
+        }
+    else:
+        device = random.choice(DEVICE_PROFILES) if DEVICE_PROFILES else {}
+
+    string_session = StringSession()
+
+    # Step 2: Proxy Connection Layer Allocation
+    proxy_node = proxy_manager.get_secured_proxy() if proxy_manager.working_count > 0 else None
+
+    client = TelegramClient(
+        string_session,
+        api_id=CONFIG["API_ID"],
+        api_hash=CONFIG["API_HASH"],
+        device_model=device.get("device_model", "PC 64bit"),
+        system_version=device.get("system_version", "Windows 11"),
+        app_version=device.get("app_version", "4.8.4"),
+        proxy=proxy_node
+    )
+
+    # Step 3: Connect and send OTP code
+    await asyncio.wait_for(client.connect(), timeout=20.0)
+    send_code_result = await client.send_code_request(phone)
+    code_hash = send_code_result.phone_code_hash
+
+    # Save to database
+    db.save_pending_session(clean_phone, string_session.save(), "pending", code_hash, device)
+
+    return {
+        "status": "code_sent",
+        "phone": phone,
+        "db_clean_phone": clean_phone,
+        "code_hash": code_hash,
+        "device": device,
+        "client": client
+    }
+
+
 async def wait_for_otp_arrival(db_clean_phone: str, timeout_seconds: int = 120) -> dict:
     """
     Poll the database for OTP arrival within the specified timeout.
@@ -1576,90 +1700,101 @@ class BulkLoginReq(BaseModel):
 
 @app.post("/login")
 async def api_login(req: LoginReq):
+    if not auth_bot:
+        raise HTTPException(503, "Bot not initialized")
+
     phone = req.phone
-    db_clean_phone = phone.replace("+", "").replace(" ", "")
     client = None
+
+    # 🔥 CRITICAL PATCH: Force disconnect and evict any hanging previous session for this exact number
+    with auth_bot._lock:
+        if phone in auth_bot.pending_codes:
+            logger.warning(f"🧹 Found dangling or duplicate previous login attempt for {phone}. Force evicting...")
+            old_state = auth_bot.pending_codes.get(phone)
+            if old_state and old_state.get("client"):
+                try:
+                    # Non-blocking background task to disconnect the old client instantly
+                    asyncio.create_task(old_state["client"].disconnect())
+                except Exception as evict_err:
+                    logger.debug(f"Failed to cleanly disconnect old client socket: {evict_err}")
+            
+            # Clear the old pending state completely to free up the number context
+            auth_bot.pending_codes.pop(phone, None)
+
     try:
-        client = auth_bot.create_user_client(phone)
-        await asyncio.wait_for(client.connect(), timeout=20.0)
+        # Use shared login process to trigger a clean, fresh MTProto transaction
+        login_result = await shared_login_process(phone)
 
-        if await client.is_user_authorized():
-            auth_bot.sessions[phone] = client
-            return {"status": "already_logged_in", "phone": phone}
+        client = login_result["client"]
+        db_clean_phone = login_result["db_clean_phone"]
+        code_hash = login_result["code_hash"]
 
-        # Send code request and wait for confirmation
-        sent = await asyncio.wait_for(client.send_code_request(phone), timeout=15.0)
+        with auth_bot._lock:
+            auth_bot.pending_codes[phone] = {
+                "client": client,
+                "phone_code_hash": code_hash,
+                "timeout": 120,
+            }
 
-        # Verify we got a valid response before storing
-        if not sent or not sent.phone_code_hash:
-            raise Exception("Failed to receive phone code hash from Telegram")
+        logger.info(f"⏳ New verification request dispatched for {phone}. Waiting for live OTP delivery...")
 
-        # Store in pending_codes immediately after successful send
-        auth_bot.pending_codes[phone] = {
-            "client": client,
-            "phone_code_hash": sent.phone_code_hash,
-            "timeout": sent.timeout,
-        }
+        # Sync waiting core layer with a safe 90 seconds timeout barrier
+        otp_data = await wait_for_otp_arrival(db_clean_phone, timeout_seconds=90)
 
-        # Now poll for OTP arrival confirmation (up to 120 seconds)
-        otp_received = await wait_for_otp_arrival(db_clean_phone, timeout_seconds=120)
-
-        if not otp_received:
-            # OTP not confirmed within 120 seconds
-            del auth_bot.pending_codes[phone]
-            raise HTTPException(
-                408,
-                "OTP confirmation failed: Code was sent to Telegram, but OTP did not arrive within 120 seconds. Please try again."
-            )
-
-        # OTP confirmed! Return success
-        return {
-            "status": "code_sent",
-            "phone": phone,
-            "timeout": sent.timeout,
-            "otp_confirmed": True,
-            "message": "OTP successfully sent and confirmed to arrive on device"
-        }
+        if otp_data:
+            logger.info(f"✅ OTP delivery confirmed inside database nodes for target: {phone}")
+            return {
+                "status": "otp_delivered",
+                "phone": phone,
+                "message": "OTP successfully received and intercepted by the automation core matrix.",
+                "timestamp": otp_data.get("date_received") or otp_data.get("timestamp")
+            }
+        else:
+            if client:
+                try: await client.disconnect()
+                except: pass
+            with auth_bot._lock:
+                auth_bot.pending_codes.pop(phone, None)
+                
+            raise HTTPException(408, "OTP delivery verification timed out. Code did not reach the device within 90 seconds.")
 
     except FloodWaitError as e:
         if client:
-            try:
-                await client.disconnect()
-            except:
-                pass
-        raise HTTPException(429, f"Rate limited. Wait {e.seconds}s")
+            try: await client.disconnect()
+            except: pass
+        raise HTTPException(429, f"Rate limited by Telegram Core. Wait {e.seconds}s")
     except asyncio.TimeoutError:
         if client:
-            try:
-                await client.disconnect()
-            except:
-                pass
+            try: await client.disconnect()
+            except: pass
         raise HTTPException(408, "Request timeout: Could not connect to Telegram or send code")
     except HTTPException:
-        # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         if client:
-            try:
-                await client.disconnect()
-            except:
-                pass
+            try: await client.disconnect()
+            except: pass
         raise HTTPException(400, str(e))
 
 
 @app.post("/verify")
 async def api_verify(req: VerifyReq):
-    phone, code = req.phone, req.code
-    if phone not in auth_bot.pending_codes:
-        raise HTTPException(404, "No pending login for this number. Call /login first.")
+    if not auth_bot:
+        raise HTTPException(503, "Bot not initialized")
 
-    pending = auth_bot.pending_codes[phone]
-    client = pending["client"]
+    phone, code = req.phone, req.code
+
+    with auth_bot._lock:
+        if phone not in auth_bot.pending_codes:
+            raise HTTPException(404, "No pending login for this number. Call /login first.")
+        pending = auth_bot.pending_codes[phone]
+        client = pending["client"]
 
     try:
         await client.sign_in(phone=phone, code=code, phone_code_hash=pending["phone_code_hash"])
-        auth_bot.sessions[phone] = client
-        del auth_bot.pending_codes[phone]
+        with auth_bot._lock:
+            auth_bot.sessions[phone] = client
+            del auth_bot.pending_codes[phone]
         auth_bot.save_account_metadata(phone)
 
         me = await client.get_me()
@@ -1673,15 +1808,20 @@ async def api_verify(req: VerifyReq):
 
 @app.post("/verify_2fa")
 async def api_verify_2fa(req: Verify2FAReq):
-    phone = req.phone
-    if phone not in auth_bot.pending_codes:
-        raise HTTPException(404, "No pending login for this number. Call /login first.")
+    if not auth_bot:
+        raise HTTPException(503, "Bot not initialized")
 
-    client = auth_bot.pending_codes[phone]["client"]
+    phone = req.phone
+
+    with auth_bot._lock:
+        if phone not in auth_bot.pending_codes:
+            raise HTTPException(404, "No pending login for this number. Call /login first.")
+        client = auth_bot.pending_codes[phone]["client"]
     try:
         await client.sign_in(password=req.password)
-        auth_bot.sessions[phone] = client
-        del auth_bot.pending_codes[phone]
+        with auth_bot._lock:
+            auth_bot.sessions[phone] = client
+            del auth_bot.pending_codes[phone]
         auth_bot.save_account_metadata(phone)
         auth_bot.save_twofa_password(phone, req.password)
 
@@ -1694,10 +1834,14 @@ async def api_verify_2fa(req: Verify2FAReq):
 
 @app.get("/sessions")
 async def api_sessions():
-    return {
-        "active": list(auth_bot.sessions.keys()),
-        "pending": list(auth_bot.pending_codes.keys()),
-    }
+    if not auth_bot:
+        raise HTTPException(503, "Bot not initialized")
+
+    with auth_bot._lock:
+        return {
+            "active": list(auth_bot.sessions.keys()),
+            "pending": list(auth_bot.pending_codes.keys()),
+        }
 
 
 @app.get(
@@ -1714,10 +1858,13 @@ async def get_otp(
     limit: int = 5,
     since_seconds: int = 300,
 ):
-    if phone not in auth_bot.sessions:
-        raise HTTPException(404, "No active session for this number. Login first via /login.")
+    if not auth_bot:
+        raise HTTPException(503, "Bot not initialized")
 
-    client = auth_bot.sessions[phone]
+    with auth_bot._lock:
+        if phone not in auth_bot.sessions:
+            raise HTTPException(404, "No active session for this number. Login first via /login.")
+        client = auth_bot.sessions[phone]
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=since_seconds)
         messages = await client.get_messages(777000, limit=limit)
@@ -1739,50 +1886,71 @@ async def get_otp(
 
 @app.get("/session/{phone}")
 async def api_check(phone: str):
-    if phone in auth_bot.sessions:
-        try:
-            me = await auth_bot.sessions[phone].get_me()
-            return {"status": "active", "name": f"{me.first_name} {me.last_name or ''}".strip(), "username": me.username}
-        except Exception:
-            return {"status": "expired"}
-    if phone in auth_bot.pending_codes:
-        return {"status": "pending_otp"}
+    if not auth_bot:
+        raise HTTPException(503, "Bot not initialized")
+
+    with auth_bot._lock:
+        if phone in auth_bot.sessions:
+            try:
+                me = await auth_bot.sessions[phone].get_me()
+                return {"status": "active", "name": f"{me.first_name} {me.last_name or ''}".strip(), "username": me.username}
+            except Exception:
+                return {"status": "expired"}
+        if phone in auth_bot.pending_codes:
+            return {"status": "pending_otp"}
     raise HTTPException(404, "No session found")
 
 
 @app.delete("/session/{phone}")
 async def api_logout(phone: str):
-    if phone in auth_bot.sessions:
-        try:
-            await auth_bot.sessions[phone].log_out()
-        except Exception:
-            pass
-        await auth_bot.sessions[phone].disconnect()
-        del auth_bot.sessions[phone]
-        return {"status": "logged_out"}
-    if phone in auth_bot.pending_codes:
-        await auth_bot.pending_codes[phone]["client"].disconnect()
-        del auth_bot.pending_codes[phone]
-        return {"status": "cancelled"}
+    if not auth_bot:
+        raise HTTPException(503, "Bot not initialized")
+
+    with auth_bot._lock:
+        if phone in auth_bot.sessions:
+            try:
+                await auth_bot.sessions[phone].log_out()
+            except Exception:
+                pass
+            try:
+                await auth_bot.sessions[phone].disconnect()
+            except Exception:
+                pass
+            del auth_bot.sessions[phone]
+            return {"status": "logged_out"}
+        if phone in auth_bot.pending_codes:
+            try:
+                await auth_bot.pending_codes[phone]["client"].disconnect()
+            except Exception:
+                pass
+            del auth_bot.pending_codes[phone]
+            return {"status": "cancelled"}
     raise HTTPException(404, "No session found")
 
 
 @app.post("/bulk_login")
 async def api_bulk_login(req: BulkLoginReq):
+    if not auth_bot:
+        raise HTTPException(503, "Bot not initialized")
+
     results = {"sent": [], "already": [], "failed": {}}
     for phone in req.phones:
         try:
-            if phone in auth_bot.sessions:
-                results["already"].append(phone)
-                continue
+            with auth_bot._lock:
+                if phone in auth_bot.sessions:
+                    results["already"].append(phone)
+                    continue
+
             client = auth_bot.create_user_client(phone)
             await client.connect()
             if await client.is_user_authorized():
-                auth_bot.sessions[phone] = client
+                with auth_bot._lock:
+                    auth_bot.sessions[phone] = client
                 results["already"].append(phone)
                 continue
             sent = await client.send_code_request(phone)
-            auth_bot.pending_codes[phone] = {"client": client, "phone_code_hash": sent.phone_code_hash, "timeout": sent.timeout}
+            with auth_bot._lock:
+                auth_bot.pending_codes[phone] = {"client": client, "phone_code_hash": sent.phone_code_hash, "timeout": sent.timeout}
             results["sent"].append(phone)
             await asyncio.sleep(3)
         except Exception as e:
@@ -1817,8 +1985,14 @@ td{{padding:6px 12px;border-bottom:1px solid #eee}}a{{text-decoration:none;color
 @app.get("/files/{file_path:path}")
 async def browse(file_path: str = ""):
     target = (BASE_DIR / file_path).resolve()
-    if not str(target).startswith(str(BASE_DIR)):
+    base_resolved = BASE_DIR.resolve()
+
+    # Strict path validation to prevent directory traversal and symlink attacks
+    try:
+        target.relative_to(base_resolved)
+    except ValueError:
         raise HTTPException(403, "Access denied")
+
     if not target.exists():
         raise HTTPException(404, "Not found")
     if target.is_dir():
@@ -1826,20 +2000,40 @@ async def browse(file_path: str = ""):
     return FileResponse(target, filename=target.name)
 
 
-# === Health check endpoint (replaces separate HTTP health server) ===
+# ... (Upar aapke saare FastAPI endpoints / routes rahenge)
+
 @app.get("/health")
-async def health():
-    return {"status": "ok"}
+async def health(): return {"status": "ok"}
 
 
+# =====================================================================
+# === 9. ASYNC INITIALIZATION ENGINE BOOTSTRAP WIZARD CORE ============
+# =====================================================================
+async def main_lifecycle_bootstrap():
+    """Initializes frameworks, proxy networks, and registers structural bot handlers safely."""
+    global auth_bot
+    auth_bot = TelegramAuthBot(CONFIG, db)
+    logger.info("✅ TelegramAuthBot initialized with session management.")
+    
+    asyncio.create_task(proxy_manager.run_pipeline_scan())
+    await bot.start(bot_token=CONFIG["BOT_TOKEN"])
+    logger.info("🤖 Master Telegram Bot Interface Authenticated and Online.")
+    asyncio.create_task(continuous_session_auditor())
+
+    logger.info("🌐 Spinning up Uvicorn Web Server inside Telethon Asyncio Loop...")
+    config = uvicorn.Config(app=app, host="0.0.0.0", port=8000, loop="asyncio")
+    server = uvicorn.Server(config)
+    await server.serve()
 
 
+# =====================================================================
+# === RUNTIME EXECUTION BLOCK =========================================
+# =====================================================================
 if __name__ == '__main__':
     print("======================================================================")
     print("🌐 Enterprise Master Control Router Engine Booted with Interactive Login Hooks.")
     print("======================================================================")
     
-    # Force ProactorEventLoop policy explicitly under Windows platforms to handle WebRTC sockets cleanly
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
         

@@ -87,65 +87,25 @@ class EnterpriseMemberAdder:
 
         async def initialize_account(acc_doc: dict):
             phone = str(acc_doc.get("phone"))
-            self.db.acquire_lock(phone) # 🔒 Lock account
-            
-            session_str = acc_doc.get("session_string")
-            device = acc_doc.get("device_metadata") or random.choice(DEVICE_PROFILES)
-            client = TelegramClient(
-                StringSession(session_str),
-                int(acc_doc.get("api_id", CONFIG["API_ID"])),
-                str(acc_doc.get("api_hash", CONFIG["API_HASH"])),
-                device_model=device["device_model"],
-                system_version=device["system_version"],
-                app_version=device["app_version"]
-            )
-            # ... rest of initialize_account stays same
-
-            try:
-                await client.connect()
-                try:
-                    if is_private:
-                        await client(ImportChatInviteRequest(resolved_token))
-                    else:
-                        await client(JoinChannelRequest(resolved_token))
-                except UserAlreadyParticipantError:
-                    pass
-                except Exception:
-                    pass
-
-                target_entity = None
-                try:
-                    if is_private:
-                        # Capture updates to resolve private entity accurately
-                        updates = await client(ImportChatInviteRequest(resolved_token))
-                        if getattr(updates, "chats", None):
-                            target_entity = updates.chats[0]
-                    else:
-                        await client(JoinChannelRequest(resolved_token))
-                except UserAlreadyParticipantError:
-                    pass
-            except Exception:
-                    pass
-
-            # Fallback for standard entities if not caught via private routing
-            if not target_entity:
-                target_entity = await client.get_entity(resolved_token if is_private else target_entity_identifier)
-
-        async def initialize_account(acc_doc: dict):
-            phone = str(acc_doc.get("phone"))
             self.db.acquire_lock(phone) # 🔒 Lock account instantly so auditor ignores it
             
-            session_str = acc_doc.get("session_string")
+            session_str = acc_doc.get("session_string") or acc_doc.get("session")
             # Use permanent device metadata if available
             device = acc_doc.get("device_metadata") or random.choice(DEVICE_PROFILES)
             
+            # Proxy allocation check integration
+            proxy_node = None
+            if self.proxy_manager and self.proxy_manager.working_count > 0:
+                proxy_node = self.proxy_manager.get_secured_proxy()
+
             client = TelegramClient(
                 StringSession(session_str),
                 int(acc_doc.get("api_id", CONFIG["API_ID"])),
                 str(acc_doc.get("api_hash", CONFIG["API_HASH"])),
                 device_model=device.get("device_model", "PC 64bit"),
                 system_version=device.get("system_version", "Windows 11"),
-                app_version=device.get("app_version", "4.8.4")
+                app_version=device.get("app_version", "4.8.4"),
+                proxy=proxy_node
             )
 
             try:
@@ -258,7 +218,10 @@ class EnterpriseMemberAdder:
                     err_msg = str(crash).lower()
                     if any(k in err_msg for k in ["banned", "deactivated", "revoked", "disabled"]):
                         self.accounts_down += 1
-                        self.db.mark_account_failed(worker_account["phone"], f"Banned at runtime: {str(crash)[:80]}")
+                        if hasattr(self.db, "mark_account_failed"):
+                            self.db.mark_account_failed(worker_account["phone"], f"Banned at runtime: {str(crash)[:80]}")
+                        else:
+                            self.db.mark_account_revoked(worker_account["phone"], f"Banned at runtime: {str(crash)[:80]}")
                         try:
                             await worker_account["client"].disconnect()
                         except Exception:
@@ -275,6 +238,10 @@ class EnterpriseMemberAdder:
                 except Exception:
                     pass
                 self.db.release_lock(worker_account["phone"]) # 🔓 Unlock safely at the end
+
+        # 🔥 FIX: Launch workers concurrently and await execution
+        workers = [asyncio.create_task(worker_loop()) for _ in range(MAX_WORKER_SESSIONS)]
+        await asyncio.gather(*workers)
 
         if self.accounts_down >= len(active_accounts) and not members_queue.empty():
             return (

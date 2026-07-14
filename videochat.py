@@ -349,27 +349,57 @@ class CloudVoiceChatEngine:
 
             # 🛠️ AUTO GROUP JOINING MATRIX PROTOCOL
             is_private, resolved_token = self.scraper_helper.resolve_group_link(group_link)
+            clean_hash = resolved_token.replace('+', '').strip()
+            
             try:
                 if is_private:
-                    self._voice_log(phone, f"Auto-joining private invite channel map: {resolved_token}")
-                    updates = await client(ImportChatInviteRequest(hash=resolved_token))
-                    if getattr(updates, "chats", None):
-                        target_entity = updates.chats[0]
+                    from telethon.tl.functions.messages import CheckChatInviteRequest, ImportChatInviteRequest
+                    self._voice_log(phone, f"Auto-joining private invite hash: {clean_hash}")
+                    
+                    # 🔥 FIXED: Check invite configuration first to grab entity context directly whether joined or not
+                    invite_info = await client(CheckChatInviteRequest(clean_hash))
+                    if type(invite_info).__name__ == "ChatInviteAlready":
+                        target_entity = invite_info.chat
+                    else:
+                        # If not a participant yet, import cleanly and extract entity from updates matrix
+                        updates = await client(ImportChatInviteRequest(clean_hash))
+                        if getattr(updates, "chats", None):
+                            target_entity = updates.chats[0]
+                        else:
+                            invite_info = await client(CheckChatInviteRequest(clean_hash))
+                            target_entity = getattr(invite_info, "chat", None)
                 else:
-                    self._voice_log(phone, f"Auto-joining public destination target node: @{resolved_token}")
-                    target_entity = await client.get_entity(resolved_token)
+                    self._voice_log(phone, f"Auto-joining public destination: @{clean_hash}")
+                    target_entity = await client.get_entity(clean_hash)
                     await client(JoinChannelRequest(target_entity))
+                    
             except UserAlreadyParticipantError:
-                self._voice_log(phone, "Target channel validation: Account wrapper node already present.")
+                self._voice_log(phone, "Target channel: Account wrapper node already present.")
+                if is_private:
+                    from telethon.tl.functions.messages import CheckChatInviteRequest
+                    invite_info = await client(CheckChatInviteRequest(clean_hash))
+                    target_entity = getattr(invite_info, "chat", None)
             except Exception as join_err:
-                self._voice_log(phone, f"Membership extraction route warning: {join_err}", "warning")
+                self._voice_log(phone, f"Membership extraction route error: {join_err}", "error")
+                raise join_err
 
-            # 🔄 CRITICAL RE-RESOLUTION STEP: Pull completely fresh target tokens post joining
-            await asyncio.sleep(2.5)
-            target_entity = await client.get_entity(resolved_token if is_private else group_link)
+            # Structural fallback check validation
+            if not target_entity:
+                if not is_private:
+                    target_entity = await client.get_entity(group_link)
+                else:
+                    raise ValueError(f"Could not resolve private invite entity for hash: {clean_hash}")
 
             # 🎯 STRICT PEER ROUTING CONVERSION MAP FOR PYTGCALLS
             chat_id = get_channel_peer_id(target_entity)
+            self._voice_log(phone, f"Target peer handshake matched structural chat_id: {chat_id}")
+
+            # ⏳ OPTIMIZED HIGH-SPEED TIMEOUT MODULE: Set to 4 attempts (40 Seconds Max Wait)
+            full_chat_info = await self._wait_for_voice_chat(client, target_entity, phone, max_retries=4)
+            if not full_chat_info:
+                self._voice_log(phone, "⚠️ Active voice chat window not found within 40 seconds. Auto-Releasing pool...", "error")
+                self.terminate_voice_cluster()
+                return
             self._voice_log(phone, f"Target peer handshake matched structural chat_id: {chat_id}")
 
             # ⏳ OPTIMIZED HIGH-SPEED TIMEOUT MODULE: Set to 4 attempts (40 Seconds Max Wait)
@@ -420,6 +450,9 @@ class CloudVoiceChatEngine:
             await asyncio.sleep(5.0)
 
             # Keep Alive Tracking Engine Loop (Resilient Core Architecture)
+            # ... (Inside _execute_single_stream method)
+            
+            # Keep Alive Tracking Engine Loop (Resilient Core Architecture)
             while self.is_running:
                 if not client.is_connected():
                     break
@@ -427,19 +460,21 @@ class CloudVoiceChatEngine:
                     await client.get_me()
                     await app.change_volume(chat_id, random.choice([90, 100]))
                     delay = random.randint(*CONFIG.get("LOOP_KEEP_ALIVE", (30, 45)))
-                    self._voice_log(phone, f"Stream healthy and stabilized. Next audit tick in {delay}s.")
+                    self._voice_log(phone, f"Stream healthy. Next tick in {delay}s.")
                     await asyncio.sleep(delay)
-                except FloodWaitError as fw:
-                    self._voice_log(phone, f"⚠️ Telegram infrastructure flood wait activated: {fw.seconds}s. Safe idling...", "warning")
-                    await asyncio.sleep(fw.seconds + 5)
-                except Exception as loop_internal_err:
-                    err_txt = str(loop_internal_err).lower()
-                    if "already ended" in err_txt or "not found" in err_txt:
-                        self._voice_log(phone, "⚠️ Voice chat dropped by host admin. Closing pool to protect accounts...", "error")
-                        self.terminate_voice_cluster()
+                
+                # 🔥 FIX: Specifically catch WebRTC/Stream dropouts to keep nodes alive
+                except Exception as loop_err:
+                    err_txt = str(loop_err).lower()
+                    if "no user has" in err_txt or "ijznrn9lipe1y2q1" in err_txt or "dropout" in err_txt:
+                        self._voice_log(phone, f"⚠️ Ghost user / WebRTC signal shift detected: {err_txt}. Staying in channel...", "warning")
+                        await asyncio.sleep(5) # Thoda rest lekar retry karein session drop kiye bina
+                        continue
+                    elif "already ended" in err_txt or "not found" in err_txt:
+                        self._voice_log(phone, "⚠️ Voice chat dropped by admin. Closing pool...", "error")
                         break
                     else:
-                        self._voice_log(phone, f"Minor baseline telemetry fluctuation caught: {loop_internal_err}", "warning")
+                        self._voice_log(phone, f"Fluctuation: {loop_err}", "warning")
                         await asyncio.sleep(10)
 
         except Exception as e:
@@ -568,3 +603,5 @@ class CloudVoiceChatEngine:
 
         # Dispatch the teardown routine without blocking the UI
         asyncio.create_task(_graceful_teardown())
+        
+        
