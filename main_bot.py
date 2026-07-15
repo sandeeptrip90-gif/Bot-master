@@ -802,7 +802,7 @@ async def continuous_session_auditor():
             audit_logger.error(f"Critical system exception inside Auditor loop manager: {global_loop_err}", exc_info=True)
             await asyncio.sleep(60)
 
-# --- 1. /login Command (Fully Restructured with Fixed Device Profiles & Stable Variables) ---
+
 # =====================================================================
 # === 1. INITIALIZE LOGIN PROCESS WITH DEVICE RETENTION (/login) =====
 # =====================================================================
@@ -1768,6 +1768,8 @@ async def api_login(req: LoginReq):
             auth_bot.pending_codes.pop(phone_normalized, None)
 
     try:
+        # Telegram's send_code_request inherently validates if the OTP was sent. 
+        # If it fails (e.g. FloodWait or Invalid Number), it raises an exception automatically.
         login_result = await shared_login_process(req.phone)
         client = login_result["client"]
         db_clean_phone = login_result["db_clean_phone"]
@@ -1782,22 +1784,17 @@ async def api_login(req: LoginReq):
                 "device": login_result["device"]  
             }
 
-        logger.info(f"⏳ New verification request dispatched for {phone_normalized}. Waiting for live OTP delivery...")
-        otp_data = await wait_for_otp_arrival(db_clean_phone, timeout_seconds=90)
+        logger.info(f"✅ OTP Code officially dispatched by Telegram for {phone_normalized}.")
+        
+        # 🔥 CRITICAL FIX: Return immediately! Do not hold the HTTP connection in a 90-sec wait loop.
+        # This perfectly mirrors the bot command behavior.
+        return {
+            "status": "code_sent",
+            "phone": req.phone,
+            "message": "OTP Code Sent Successfully! Please submit the verification code.",
+            "phone_code_hash": code_hash
+        }
 
-        if otp_data:
-            return {
-                "status": "otp_delivered",
-                "phone": req.phone,
-                "message": "OTP successfully received and intercepted by the automation core matrix.",
-                "timestamp": otp_data.get("date_received") or otp_data.get("timestamp")
-            }
-        else:
-            if client:
-                try: await client.disconnect()
-                except: pass
-            with auth_bot._lock: auth_bot.pending_codes.pop(phone_normalized, None)
-            raise HTTPException(408, "OTP delivery verification timed out.")
     except Exception as e:
         if client:
             try: await client.disconnect()
