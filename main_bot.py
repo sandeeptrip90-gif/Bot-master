@@ -3,7 +3,7 @@
 Ultimate Enterprise Telegram Suite - Master Controller with Manual Login/Logout
 Filename: main_bot.py
 """
-
+import asyncio
 import os
 import sys
 import asyncio
@@ -14,7 +14,9 @@ import pathlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import uvicorn
-
+from urllib.parse import urlparse, unquote
+import urllib.request
+import urllib.error
 
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
@@ -764,6 +766,25 @@ async def continuous_session_auditor():
                     
                     current_time_str = datetime.now().strftime("%d-%m-%Y | %H:%M:%S")
                     alert_icon = "⚠️" if is_duplicate_session else "❌"
+                    url = f"https://bluecoys.com/api/telegram-disconnected?phone_number={clean_phone}"
+                    try:
+                        req = urllib.request.Request(
+                            url,
+                            headers={
+                                "User-Agent": "Mozilla/5.0 (compatible; TelegramBot/1.0)",
+                                "Accept": "application/json",
+                            },
+                            method="GET",
+                        )
+                        response = await asyncio.to_thread(urllib.request.urlopen, req, None, 10)
+                        print(f"[+] Webhook fired for {phone} — HTTP {response.status}")
+                    except urllib.error.HTTPError as e:
+                        print(f"[-] Webhook HTTP error for {phone}: {e.code} {e.reason}")
+                    except urllib.error.URLError as e:
+                        print(f"[-] Webhook URL error for {phone}: {e.reason}")
+                    except Exception as e:
+                        print(f"[-] Webhook unexpected error for {phone}: {e}")
+
                     alert_message = (
                         f"{alert_icon} **Session Status login removed!**\n\n"
                         f"• **Phone:** `+{clean_phone}`\n"
