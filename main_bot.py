@@ -3,7 +3,7 @@
 Ultimate Enterprise Telegram Suite - Master Controller with Manual Login/Logout
 Filename: main_bot.py
 """
-import asyncio
+
 import os
 import sys
 import asyncio
@@ -14,9 +14,7 @@ import pathlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import uvicorn
-from urllib.parse import urlparse, unquote
-import urllib.request
-import urllib.error
+
 
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
@@ -41,6 +39,8 @@ from scraper import MemberScraper
 from videochat import CloudVoiceChatEngine
 from adder import EnterpriseMemberAdder
 from dmsender import setup_dmsender_handlers
+from telethon.tl.functions.contacts import GetContactsRequest
+from web_console import console_router, init_console_db
 
 # Logging Setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -235,49 +235,63 @@ async def centralized_ui_router(event):
     # =====================================================================
     # 🛠️ 2. DIAGNOSTICS & MONITORING INTERFACE HANDLER FIXED
     # =====================================================================
+    # [main_bot.py ke andar 'nav_lvl1_data' aur 'nav_lvl1_campaigns' blocks ko isse replace karein]
+
     elif route == "nav_lvl1_data":
         scraped_rows = db.count_scraped_data()
         data_text = (
-            "🛰️ **Data Extraction Core Engine**\n"
+            "🛰️ **CORE DATA EXTRACTION CONTROL ROOM**\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"{status_bar}\n"
-            "📦 **Storage Repo Snapshot:**\n"
-            f"• Current Synced Records: `{scraped_rows}` unique profiles saved\n\n"
-            "⚡ **Available Scraper Workflows:**\n"
-            "👉 *Niche diye gaye parameters ko copy karke direct chat mein chalayein:*\n\n"
-            "🔹 **Global Aggregate Full Scrape**\n"
+            "📦 **DATA STORAGE REPOSITORY SNAPSHOT:**\n"
+            f"• Synchronized Database Pool: `{scraped_rows}` unique profiles saved\n\n"
+            "⚡ **LIVE SCRAPER GRID MODULES:**\n"
+            "👉 *Copy parameters to run directly inside the chat window:*\n\n"
+            "🆔 **Targeted Specific Account Scraper:**\n"
+            "• `/scrape_group_all <group_link> <phone_number>`\n\n"
+            "🔹 **Global Aggregate Full Scrape:**\n"
             "• `/scrape_all <group_link>`\n\n"
-            "🔹 **Aggressive 24h Active Scan**\n"
+            "🔹 **Aggressive 24h Active Scan:**\n"
             "• `/scrape_active_24h <group_link>`\n\n"
-            "🔹 **7-Day Activity Interval Crawler**\n"
+            "🔹 **7-Day Activity Interval Crawler:**\n"
             "• `/scrape_weekly <group_link>`\n\n"
-            "🔹 **Deep Interaction Log Analyzer**\n"
+            "🔹 **Deep Interaction Log Analyzer:**\n"
             "• `/scrape_hidden <group_link>`\n\n"
-            "🔹 **Live VoiceChat Call Tracker**\n"
+            "🔹 **Live VoiceChat Call Tracker:**\n"
             "• `/scrape_from_voicechat <group_link>`\n\n"
-            "🔹 **Direct Contacts to CSV Spreadsheet**\n"
+            "📥 **Direct Contacts Utility Engine:**\n"
             "• `/contact_scraper <phone_number>`\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
+        
+        # 🔥 FIX: Extraction panel ke buttons strictly yahan aane chahiye
         data_buttons = [
-            [Button.inline("🗑️ Clear Scraped Data", data="action_clear_scraped")],
-            [Button.inline("⬅️ Back to Console", data="nav_lvl1_main")]
+            [Button.inline("📊 Repo Analytics", data="nav_lvl1_stats"),
+             Button.inline("🗑️ Clear Scraped Data", data="action_clear_scraped")],
+            [Button.inline("⬅️ Back to Main Console", data="nav_lvl1_main")]
         ]
         await event.edit(data_text, buttons=data_buttons)
 
     elif route == "nav_lvl1_campaigns":
         market_text = (
-            "**Campaigns & Execution**\n\n"
+            "⚔️ **CAMPAIGNS & LIVE EXECUTION**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"{status_bar}\n"
-            "Deploy actions to your account pool using the following commands:\n"
-            "• `/addmembers <link>` (Member Adder)\n"
-            "• `/run_voicechat <link> count` (Voice Chat Deployment)\n"
-            "• `/send_dmsender` (Direct Message Campaigns)"
+            "Deploy parallel actions to your account pool using these commands:\n\n"
+            "🚀 **Mass Member Adder Engine:**\n"
+            "• `/addmembers <link>`\n\n"
+            "🎙️ **Voice Chat Cluster Deployment:**\n"
+            "• `/run_voicechat <link> [count]`\n\n"
+            "💬 **Direct Message Blast Campaigns:**\n"
+            "• `/send_dmsender`\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
+        
+        # 🔥 FIX: Campaigns block se un-related buttons ko hatakar ekdum clean grid design kiya hai
         market_buttons = [
-            [Button.inline("Halt DM Sender", data="action_halt_dm"),
-             Button.inline("Stop Voice Chat", data="action_halt_voice")],
-            [Button.inline("Back", data="nav_lvl1_main")]
+            [Button.inline("🛑 Halt DM Sender", data="action_halt_dm"),
+             Button.inline("🔇 Stop Voice Chat", data="action_halt_voice")],
+            [Button.inline("⬅️ Back to Main Console", data="nav_lvl1_main")]
         ]
         await event.edit(market_text, buttons=market_buttons)
 
@@ -303,9 +317,55 @@ async def centralized_ui_router(event):
             f"Healthy Proxies: `{proxy_manager.working_count}`"
         )
         await event.edit(stats_text, buttons=back_to_lvl1)
+        
+    # [main_bot.py ke centralized_ui_router block ke andar 'nav_lvl1_stats' ke thik niche naya add karein]
+
+    elif route == "nav_lvl1_diag":
+        # Telemetry counts aur proxy states read karne ke liye variables mapping
+        worker_id = CONFIG.get("WORKER_NODE_ID", "worker_01")
+        healthy_proxies = proxy_manager.working_count
+        cached_handshakes = len(PERSISTENT_CLIENT_POOL)
+        
+        diag_text = (
+            "🛡️ **INFRASTRUCTURE DIAGNOSTICS & SYSTEM MONITORING**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{status_bar}\n"
+            "🖥️ **RUNTIME INFRASTRUCTURE LOGS:**\n"
+            f"• Core Worker Node: `{worker_id}`\n"
+            f"• Connection Pool Engine: `{cached_handshakes}` active client threads\n"
+            f"• Shared Task Queues: `🟢 SYSTEM IDLE / READY`\n\n"
+            "📡 **LIVE TELEMETRY PARAMETERS:**\n"
+            "👉 *Niche diye gaye actions ko trigger karke metrics check karein:*\n\n"
+            "🔑 **Dynamic OTP Operations:**\n"
+            "• `/otp +91XXXXXXXXXX` (Fetch latest server token)\n"
+            "• `/otp_wait +91XXXXXXXXXX` (Live polling monitor)\n\n"
+            "🔄 **On-Demand Maintenance Pipelines:**\n"
+            "• `/clean_banned_accounts` (Purge dead MTProto nodes)\n"
+            "• `/reload_accounts` (Sync sessions folder storage)\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
+        
+        # 🔥 PREMIUM SAAS INFRASTRUCTURE BUTTON CONTROL MATRIX
+        diag_buttons = [
+            [
+                Button.inline("📡 Scan Proxy Health Grid", data="diag_proxy_health"),
+                Button.inline("⏳ Core Runtime Stats", data="diag_runtime_stats")
+            ],
+            [
+                Button.inline("📨 View Latest OTP Log", data="diag_otp_view"),
+                Button.inline("🚨 Start OTP Live Wait", data="diag_otp_wait")
+            ],
+            [
+                Button.inline("⬅️ Return to Master Console", data="nav_lvl1_main")
+            ]
+        ]
+        await event.edit(diag_text, buttons=diag_buttons)    
 
     # -----------------------------------------------------------------
     # LEVEL 2: ACCOUNT EXPLORER & PAGINATION FRAMEWORK
+    # -----------------------------------------------------------------
+    # -----------------------------------------------------------------
+    # LEVEL 2: PREMIUM ACCOUNT EXPLORER & PAGINATION FRAMEWORK
     # -----------------------------------------------------------------
     elif route.startswith("nav_lvl2_explorer") or route.startswith("set_exp_"):
         if "set_exp_" in route:
@@ -318,13 +378,13 @@ async def centralized_ui_router(event):
         # Compute subset parameters dynamic pipeline arrays
         if current_filter == "active":
             filtered_list = [x for x in all_sessions if x.get("status") == "active"]
-            header_lbl = "Active Accounts"
+            header_lbl = "Active Matrix"
         elif current_filter == "revoked":
             filtered_list = [x for x in all_sessions if x.get("status") == "revoked"]
-            header_lbl = "Revoked Accounts"
+            header_lbl = "Revoked Pool"
         elif current_filter == "pending":
             filtered_list = [x for x in all_sessions if x.get("status") == "pending" or x.get("status") == "2fa_required"]
-            header_lbl = "Pending Accounts"
+            header_lbl = "Pending Interceptions"
         elif current_filter == "today":
             today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             filtered_list = []
@@ -337,7 +397,7 @@ async def centralized_ui_router(event):
             header_lbl = "Today's Logins"
 
         # Structural Pagination parameters calculation
-        ITEMS_PER_PAGE = 15
+        ITEMS_PER_PAGE = 8  # Reduced slightly to keep premium multi-line labels clean
         total_items = len(filtered_list)
         total_pages = max(1, (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
         
@@ -350,40 +410,61 @@ async def centralized_ui_router(event):
         page_items = filtered_list[start_idx:end_idx]
 
         explorer_text = (
-            f"**Account Explorer** | {header_lbl}\n\n"
-            f"Showing {start_idx + 1}–{min(end_idx, total_items)} of {total_items}\n"
-            "Select an account to view its profile."
+            "🏢 **ENTERPRISE ACCOUNT INVENTORY EXPLORER**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"⚡ **Current View Filter:** `[{header_lbl}]`\n"
+            f"📦 **Segment Record:** Showing `{start_idx + 1}–{min(end_idx, total_items)}` of `{total_items}` entries\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Select any identity element node from the catalog below to inspect structural metadata logs."
         )
 
         explorer_buttons = []
         for acc in page_items:
             phone_num = str(acc.get("phone", ""))
-            short_phone = phone_num[-4:] if len(phone_num) >= 4 else phone_num
-            status_val = acc.get("status")
+            status_val = acc.get("status", "pending")
             status_icon = "🟢" if status_val == "active" else "🔴" if status_val == "revoked" else "🟡"
-            device_raw = str(acc.get("device_model", "Unknown"))
-            device_name = device_raw.split()[0][:12] # Ensure compact display
             
-            btn_label = f"{status_icon} {short_phone} • {device_name}"
+            # 🔥 EXTRACTION LAYER: Parse first_name or default representation strings
+            first_name = str(acc.get("first_name") or "").strip()
+            name_lbl = f"👤 {first_name} | " if first_name and first_name != "None" else ""
+            
+            # 🔥 FIXED LOGIN DATE/TIME NORMALIZER: Pull protected authenticated_at key
+            login_time_raw = acc.get("authenticated_at") or acc.get("last_updated") or acc.get("timestamp")
+            if isinstance(login_time_raw, (int, float)):
+                login_time_raw = datetime.utcfromtimestamp(login_time_raw)
+            
+            if isinstance(login_time_raw, datetime):
+                # Standard clean representation mapping format (DD-MM-YYYY | HH:MM)
+                date_str = login_time_raw.strftime("%d-%m-%Y | %H:%M")
+            else:
+                date_str = "N/A Date"
+                
+            # Premium SaaS Multi-Information Label Alignment
+            btn_label = f"{status_icon} {name_lbl}+{phone_num} • 🗓️ {date_str}"
             explorer_buttons.append([Button.inline(btn_label, data=f"view_prof_{phone_num}")])
 
         # Generate pagination management matrix configuration row
         prev_data = f"nav_lvl2_explorer_page_{max(1, page - 1)}"
         next_data = f"nav_lvl2_explorer_page_{min(total_pages, page + 1)}"
+        
         explorer_buttons.append([
-            Button.inline("Previous", data=prev_data),
-            Button.inline(f"Page {page} of {total_pages}", data="noop"),
-            Button.inline("Next", data=next_data)
+            Button.inline("⏮️ Previous", data=prev_data),
+            Button.inline(f"PAGE {page} OF {total_pages}", data="noop"),
+            Button.inline("Next ⏭️", data=next_data)
         ])
 
-        # Filter Switching Command Options Tiers
+        # Filter Switching Command Options Tiers (Clean Matrix Split)
         explorer_buttons.append([
-            Button.inline("Active", data="set_exp_active"),
-            Button.inline("Revoked", data="set_exp_revoked"),
-            Button.inline("Pending", data="set_exp_pending")
+            Button.inline("🟢 Active", data="set_exp_active"),
+            Button.inline("🔴 Revoked", data="set_exp_revoked"),
+            Button.inline("🟡 Pending", data="set_exp_pending")
         ])
-        explorer_buttons.append([Button.inline("Today's Logins", data="set_exp_today")])
-        explorer_buttons.append([Button.inline("Back", data="nav_lvl1_accounts")])
+        explorer_buttons.append([
+            Button.inline("📅 Today's Session Matrix Logs", data="set_exp_today")
+        ])
+        explorer_buttons.append([
+            Button.inline("⬅️ Return to Accounts Admin", data="nav_lvl1_accounts")
+        ])
 
         await event.edit(explorer_text, buttons=explorer_buttons)
 
@@ -480,36 +561,44 @@ async def centralized_ui_router(event):
             
         await event.answer()
 
+
     elif route == "action_trigger_clean":
         await event.edit("Running account cleanup workflow...", buttons=None)
         try:
-            active, cleaned, logs = await voice_engine.clean_banned_accounts_handler()
-            await event.reply(f"**Cleanup Complete**\nActive Accounts: `{active}`\nRevoked/Removed: `{cleaned}`")
+            # 🔥 FIX: Dictionary response ko safely receive karna bina unpack error ke
+            result = await voice_engine.clean_banned_accounts_handler()
+            
+            # Premium structured report generation for the button action
+            report = (
+                "🔄 **Cleaned Accounts Complete**\n\n"
+                "📊 **Final Storage Audit:**\n"
+                f"• Total Processed: `{result['processed']}`\n"
+                f"• Success Active: `{result['active']}`\n"
+                f"• Defective/Banned: `{result['failed']}`\n"
+                f"• Missing Sessions: `{result['skipped']}`"
+            )
+            
+            if result.get("errors"):
+                report += "\n\n📋 **Issues Detected:**\n"
+                for idx, err in enumerate(result["errors"], 1):
+                    raw_phone = str(err['phone']).strip()
+                    formatted_phone = f"+{raw_phone}" if not raw_phone.startswith("+") else raw_phone
+                    line = f"`{idx}.` `{formatted_phone}` ➜ {err['error']}\n"
+                    
+                    # Anti-crash buffer for Telegram 4096 character size limitation
+                    if len(report) + len(line) > 3900:
+                        await event.reply(report)
+                        report = "📋 **Issues Detected (Continued):**\n\n"
+                        
+                    report += line
+            
+            await event.reply(report)
+            
         except Exception as e:
+            logger.error(f"Error inside Button Clean Handler: {e}", exc_info=True)
             await event.reply(f"Execution Error: {e}")
         await event.answer()
-
-    elif route.startswith("action_audit_"):
-        target_phone = route.replace("action_audit_", "")
-        await event.answer(f"Running audit on +{target_phone}...", alert=True)
-        record = db.get_session_by_phone(target_phone)
-        if record:
-            try:
-                tc = TelegramClient(StringSession(record.get("session")), int(record.get("api_id", CONFIG["API_ID"])), str(record.get("api_hash", CONFIG["API_HASH"])))
-                await tc.connect()
-                await tc.get_me()
-                await tc.disconnect()
-                await event.reply(f"🟢 Account `+{target_phone}` is healthy and operational.")
-            except Exception as audit_err:
-                db.mark_account_revoked(target_phone, str(audit_err))
-                await event.reply(f"🔴 Audit failed. Account marked as revoked: `{audit_err}`")
-
-    elif route.startswith("action_logout_"):
-        target_phone = route.replace("action_logout_", "")
-        db.remove_account_permanently(target_phone)
-        await event.answer(f"Account +{target_phone} removed.", alert=True)
-        await event.edit("**Accounts Administration**\n\nAccount pool updated.", buttons=back_to_lvl1)
-
+        
     # -----------------------------------------------------------------
     # DIAGNOSTICS CONTROL HOOK ROUTING
     # -----------------------------------------------------------------
@@ -695,14 +784,24 @@ async def continuous_session_auditor():
                 if not client:
                     api_id = int(account_doc.get("api_id", CONFIG["API_ID"]))
                     api_hash = str(account_doc.get("api_hash", CONFIG["API_HASH"]))
-                    
-                    # FIXED: Telethon standard session generation syntax path configuration
                     session_object = StringSession(session_str)
+                    
+                    # 🔥 FIX: STRICT FINGERPRINT BINDING IN AUDITOR
+                    # Pehle auditor bina device profile ke login kar raha tha, jis se ban lag rahe the.
+                    # Ab yeh 100% database lock profile hi use karega.
+                    device = account_doc.get("device_metadata") or {
+                        "device_model": account_doc.get("device_model", "PC 64bit"),
+                        "system_version": account_doc.get("system_version", "Windows 11"),
+                        "app_version": account_doc.get("app_version", "4.8.4")
+                    }
                     
                     client = TelegramClient(
                         session_object,
                         api_id=api_id,
-                        api_hash=api_hash
+                        api_hash=api_hash,
+                        device_model=device.get("device_model", "PC 64bit"),
+                        system_version=device.get("system_version", "Windows 11"),
+                        app_version=device.get("app_version", "4.8.4")
                     )
                     PERSISTENT_CLIENT_POOL[clean_phone] = client
 
@@ -766,25 +865,6 @@ async def continuous_session_auditor():
                     
                     current_time_str = datetime.now().strftime("%d-%m-%Y | %H:%M:%S")
                     alert_icon = "⚠️" if is_duplicate_session else "❌"
-                    url = f"https://bluecoys.com/api/telegram-disconnected?phone_number={clean_phone}"
-                    try:
-                        req = urllib.request.Request(
-                            url,
-                            headers={
-                                "User-Agent": "Mozilla/5.0 (compatible; TelegramBot/1.0)",
-                                "Accept": "application/json",
-                            },
-                            method="GET",
-                        )
-                        response = await asyncio.to_thread(urllib.request.urlopen, req, None, 10)
-                        print(f"[+] Webhook fired for {phone} — HTTP {response.status}")
-                    except urllib.error.HTTPError as e:
-                        print(f"[-] Webhook HTTP error for {phone}: {e.code} {e.reason}")
-                    except urllib.error.URLError as e:
-                        print(f"[-] Webhook URL error for {phone}: {e.reason}")
-                    except Exception as e:
-                        print(f"[-] Webhook unexpected error for {phone}: {e}")
-
                     alert_message = (
                         f"{alert_icon} **Session Status login removed!**\n\n"
                         f"• **Phone:** `+{clean_phone}`\n"
@@ -1285,28 +1365,47 @@ async def accounts_refresh_router(event):
         
 @bot.on(events.NewMessage(pattern='/clean_banned_accounts'))
 async def clean_banned_accounts_router(event):
-    status_msg = await event.reply("📡 **On-Demand Connectivity Check Triggered!**\n\n⚙️ Saare database accounts ki live connectivity aur session validity check ki ja rahi hai... Isme thoda samay lag sakta hai, kripya pratiksha karein.")
+    if not is_admin(event.sender_id): 
+        return
+        
+    status_msg = await event.reply("📡 **On-Demand Connectivity Check Triggered!**\n\n⚙️ Saare database accounts ki live connectivity aur validity check ki ja rahi hai... Isme thoda samay lag sakta hai, kripya pratiksha karein.")
     
     try:
-        # Voice engine ke naye on-demand handler ko call karein
-        active, cleaned, logs = await voice_engine.clean_banned_accounts_handler()
+        # Voice engine se audit metrics dictionary load karein
+        result = await voice_engine.clean_banned_accounts_handler()
         
+        # Premium structured overview data card generation
         report = (
-            "🎯 **ACCOUNT CLEANUP SUMMARY REPORT**\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"✨ Total Active & Valid Sessions: `{active}`\n"
-            f"🗑️ Total Banned/Expired Sessions Cleaned: `{cleaned}`\n\n"
+            "🔄 **Cleaned Accounts Complete**\n\n"
+            "📊 **Final Storage Audit:**\n"
+            f"• Total Processed: `{result['processed']}`\n"
+            f"• Success Active: `{result['active']}`\n"
+            f"• Defective/Banned: `{result['failed']}`\n"
+            f"• Missing Sessions: `{result['skipped']}`"
         )
         
-        if logs and cleaned > 0:
-            report += "📋 **Cleaned Accounts Details:**\n"
-            for idx, log in enumerate(logs[:15], 1):
-                if "Network Error" not in log['error']:
-                    report += f" `{idx}.` 📱 `{log['phone']}` ➔ 🛑 `{log['error']}`\n"
+        # Agar system mein koi defective/banned issues mile hain, unhe reasons ke sath map karein
+        if result.get("errors"):
+            report += "\n\n📋 **Issues Detected:**\n"
+            
+            for idx, err in enumerate(result["errors"], 1):
+                raw_phone = str(err['phone']).strip()
+                # Ensure correct prefix representation format safely
+                formatted_phone = f"+{raw_phone}" if not raw_phone.startswith("+") else raw_phone
+                line = f"`{idx}.` `{formatted_phone}` ➜ {err['error']}\n"
+                
+                # Anti-crash protection: Telegram 4096 character size restriction handler
+                if len(report) + len(line) > 3900:
+                    await status_msg.edit(report)
+                    status_msg = await event.respond("⏳ **Processing Next Batch of Issues...**")
+                    report = "📋 **Issues Detected (Continued):**\n\n"
                     
+                report += line
+                
         await status_msg.edit(report)
         
     except Exception as ex:
+        logger.error(f"Error inside clean router block: {ex}", exc_info=True)
         await status_msg.edit(f"❌ **Cleanup Execution Failed:** `{str(ex)}`")
         
 
@@ -1322,41 +1421,90 @@ async def account_purge_router(event):
     else:
         await event.reply(f"⚠️ Record match inside system sets failed.")
 
+
 # =====================================================================
 # === 5. DYNAMIC DATA EXTRACTION PIPELINE (ROBUST ENGINE MATRICES) ====
 # =====================================================================
 async def generic_scrape_runner(event, mode, title_label):
     raw_text = event.text.strip()
-    input_segments = raw_text.split(maxsplit=1)
+    input_segments = raw_text.split(maxsplit=2)
     
+    # Target Command Validation
     if len(input_segments) < 2:
         await event.reply(f"❌ **Syntax Error:** Proper target command input required!\n👉 **Format:** `/{event.text.split()[0].lstrip('/')} <group_link>`")
         return
         
     target_link = input_segments[1].strip().replace("<", "").replace(">", "").replace('"', '').replace("'", "")
-    active_sessions = db.get_active_target_sessions()
     
-    if not active_sessions:
-        await event.reply("❌ **Operation Dropped:** Verified processing modules are empty. Run `/reload_accounts` first.")
-        return
+    # 🔥 FEATURE FIX: Target Specific Phone Scrape Mode
+    selected_worker = None
+    if mode == 'specific_phone':
+        if len(input_segments) < 3:
+            await event.reply("❌ **Syntax Error:** Target phone number missing!\n👉 **Format:** `/scrape_group_all <group_link> <phone_number>`")
+            return
+            
+        target_phone = clean_phone_input(input_segments[2].strip()).replace("+", "")
+        record = db.get_session_by_phone(target_phone)
         
-    status_msg = await event.reply(f"📡 **Launching {title_label} Scan Engine...**\n⚡ Connecting via random available node endpoint...")
-    
-    try:
+        if not record or not record.get("session") or record.get("status") != "active":
+            await event.reply(f"❌ **Operation Dropped:** Provided account `+{target_phone}` is either not in DB, missing session, or not Active.")
+            return
+            
+        # Hard normalize absolute standard token tracking key matrices mapping
+        selected_worker = dict(record)
+        selected_worker["phone"] = target_phone
+        selected_worker["session"] = str(record.get("session") or record.get("session_string"))
+        selected_worker["session_string"] = selected_worker["session"]
+    else:
+        # Standard Fallback: Randomly select from verified active inventory pool
+        active_sessions = db.get_active_target_sessions()
+        if not active_sessions:
+            await event.reply("❌ **Operation Dropped:** Verified processing modules are empty. Run `/reload_accounts` first.")
+            return
         selected_worker = random.choice(active_sessions)
         
+    status_msg = await event.reply(f"📡 **Launching {title_label} Scan Engine...**\n⚡ Connecting via targeted node endpoint `+{selected_worker['phone']}`...")
+    
+    # 🔥 STRICT DEVICE FINGERPRINT RETAINER: Reconstruct explicitly using the exact DB profile records
+    device = {
+        "device_model": selected_worker.get("device_model", "PC 64bit"),
+        "system_version": selected_worker.get("system_version", "Windows 11"),
+        "app_version": selected_worker.get("app_version", "4.8.4")
+    }
+
+    # Custom local connection client allocation for the specific scraper session thread
+    from telethon.sessions import StringSession
+    client = TelegramClient(
+        StringSession(selected_worker["session"]),
+        api_id=int(selected_worker.get("api_id", CONFIG["API_ID"])),
+        api_hash=str(selected_worker.get("api_hash", CONFIG["API_HASH"])),
+        device_model=device["device_model"],
+        system_version=device["system_version"],
+        app_version=device["app_version"]
+    )
+
+    try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            await status_msg.edit(f"🔴 **Session Revoked:** Target node `+{selected_worker['phone']}` is no longer authorized.")
+            return
+
+        # Core scraper framework processing router execution mapping
+        # pass worker token container safely as structured doc dict context
         if mode == 'hidden':
             count = await scraper_engine.scrape_hidden_matrix(selected_worker, target_link)
         elif mode == 'voicechat':
             count = await scraper_engine.scrape_voicechat_matrix(selected_worker, target_link)
         else:
-            count = await scraper_engine.scrape_standard_pool(selected_worker, target_link, mode)
+            # For standard pool and 'specific_phone' (which scrapes 'all' members), use standard handler
+            scrape_mode = 'all' if mode == 'specific_phone' else mode
+            count = await scraper_engine.scrape_standard_pool(selected_worker, target_link, scrape_mode)
             
-        # 🔥 UPGRADED UI REPORT: Premium formatted extraction completion card
         success_report = (
             f"🏆 **[{title_label}] Sequence Complete!**\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 **Metrics Summary Output:**\n"
+            f"• Scraper Account: `+{selected_worker['phone']}`\n"
             f"• Destination Registry: `scraped_data` repository\n"
             f"• Total Extracted Rows: `{count}` unique profiles saved\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1366,8 +1514,18 @@ async def generic_scrape_runner(event, mode, title_label):
     except Exception as e:
         logger.error(f"Global core script crash processing elements handler: {e}")
         await status_msg.edit(f"❌ **Scraper Infrastructure Exception:** `{str(e)[:150]}`")
+    finally:
+        try: await client.disconnect()
+        except: pass
 
-# (Aapke purane commands ke niche naya command add karein)
+# =====================================================================
+# === SCRAPER COMMAND ENGINE REGISTRY MATRICES MAPPING ===============
+# =====================================================================
+@bot.on(events.NewMessage(pattern=r'/scrape_group_all(\s+|$)'))
+async def scrape_group_all_cmd(event): 
+    # 🔥 New custom single target phone number group scraper module execution call
+    await generic_scrape_runner(event, 'specific_phone', 'Targeted Single-Account Full Scrape')
+
 @bot.on(events.NewMessage(pattern=r'/scrape_from_voicechat(\s+|$)'))
 async def scrape_vc_cmd(event): 
     await generic_scrape_runner(event, 'voicechat', 'Live VoiceChat Call Tracker')
@@ -1403,10 +1561,18 @@ async def delete_scraped_files_cmd(event):
         logger.error(f"Database clean operation exception: {e}")
         await event.reply(f"❌ **Database Execution Fault:** Cannot drop active records lines: {e}")
 
-# =====================================================================
-# === 6.1 DIRECT CONTACTS EXTRACTOR TO CSV (/contact_scraper) =========
-# =====================================================================
-import csv
+
+
+
+import re
+
+def clean_db_name(name):
+    """Normalize 'DB001', 'DB-001', 'db001' to 'DB 001' format."""
+    # Regex check: Agar naam mein DB aur digits hain toh format fix karo
+    match = re.search(r'db[\s-]*(\d+)', name, re.IGNORECASE)
+    if match:
+        return f"DB {match.group(1).zfill(3)}"
+    return name.strip()
 
 @bot.on(events.NewMessage(pattern=r'/contact_scraper(?:\s+(.+))?'))
 async def direct_contact_csv_scraper(event):
@@ -1421,13 +1587,16 @@ async def direct_contact_csv_scraper(event):
     phone = clean_phone_input(raw_input.strip())
     db_clean_phone = phone.replace("+", "")
 
-    status_msg = await event.reply(f"📡 **Accessing account session `+{db_clean_phone}`...**\nChecking device profile mapping...")
+    status_msg = await event.reply(f"📡 **Accessing account session `+{db_clean_phone}`...**")
 
+    # DB se record fetch karo (Fingerprint ke liye - No random generation)
     record = db.get_session_by_phone(db_clean_phone)
     if not record or not record.get("session"):
-        await status_msg.edit(f"❌ **Operation Failed:** Account `+{db_clean_phone}` ka session DB mein nahi mila.")
+        await status_msg.edit(f"❌ **Operation Failed:** Account `+{db_clean_phone}` session DB mein nahi mila.")
         return
 
+    # 🔥 FIX: STRICT DEVICE FINGERPRINT BINDING
+    # Database mein saved profile ka use karna, random/default ignore karna.
     device = {
         "device_model": record.get("device_model", "PC 64bit"),
         "system_version": record.get("system_version", "Windows 11"),
@@ -1443,41 +1612,56 @@ async def direct_contact_csv_scraper(event):
         app_version=device["app_version"]
     )
 
+    # [main_bot.py ke direct_contact_csv_scraper route ko yahan se replace karo]
+
     try:
         await client.connect()
         if not await client.is_user_authorized():
-            await status_msg.edit(f"🔴 **Session Revoked:** Account `+{db_clean_phone}` is no longer authorized.")
+            await status_msg.edit(f"🔴 **Session Revoked:** Account `+{db_clean_phone}` access denied.")
             return
 
-        contacts_list = await client.get_contacts()
-        if not contacts_list:
-            await status_msg.edit(f"ℹ️ Account `+{db_clean_phone}` ke andar koi saved contacts nahi mile.")
-            return
-
-        await status_msg.edit("📊 **Compiling dataset rows...**\nGenerating clean spreadsheet architecture...")
-
-        file_path = f"contacts_{db_clean_phone}.csv"
+        contacts_result = await client(GetContactsRequest(hash=0))
+        contacts_list = contacts_result.users
         
-        with open(file_path, "w", newline="", encoding="utf-8") as csv_file:
-            writer = csv.writer(csv_file)
-            writer.writerow(["Name", "Phone Number", "Telegram ID"])
-            
+        if not contacts_list:
+            await status_msg.edit(f"ℹ️ Account `+{db_clean_phone}` has no saved contacts.")
+            return
+
+        await status_msg.edit("📊 **Generating clean TXT structure...**")
+
+        file_path = f"contacts_{db_clean_phone}.txt"
+        
+        with open(file_path, "w", encoding="utf-8") as f:
             for contact in contacts_list:
-                full_name = f"{contact.first_name or ''} {contact.last_name or ''}".strip() or "No Name"
-                phone_num = f"+{contact.phone}" if contact.phone else "None"
-                writer.writerow([full_name, phone_num, contact.id])
+                if contact.deleted: continue
+                    
+                # 1. Clean Name (Fixes DB format + Hindi + Sanitization)
+                raw_name = f"{contact.first_name or ''} {contact.last_name or ''}".strip() or "No Name"
+                clean_name = clean_db_name(raw_name)
+                
+                # 🔥 FIX: Essential Sanitization for Line Formatting
+                # Remove newlines, tabs, and escape single quotes to prevent file breakage
+                clean_name = clean_name.replace("\n", " ").replace("\r", " ").replace("'", "\\'")
+                
+                # 2. Get Phone (Kept as original)
+                phone_num = str(contact.phone).strip() if contact.phone else ""
+                
+                # 3. Write in exact format: { PhoneNumber: '...', UserName: '...' }
+                # Ensure each entry is strictly on one line
+                line = f"{{ PhoneNumber: '{phone_num}', UserName: '{clean_name}' }}\n"
+                f.write(line)
 
         await bot.send_file(
             event.chat_id, 
             file_path, 
-            caption=f"📥 **CSV Contacts Spreadsheet Exported!**\n\n• **Target Account:** `+{db_clean_phone}`\n• **Total Saved Extracted:** `{len(contacts_list)}` contacts"
+            caption=f"📥 **Contacts Exported (TXT)!**\n\n• **Account:** `+{db_clean_phone}`\n• **Count Saved Extracted:** `{len(contacts_list)}`"
         )
         if os.path.exists(file_path): os.remove(file_path)
         await status_msg.delete()
 
     except Exception as err:
-        logger.error(f"Error inside CSV scraper module channel: {err}", exc_info=True)
-        await status_msg.edit(f"❌ **Scraper Infrastructure Exception:** `{str(err)}`")
+        logger.error(f"Error: {err}", exc_info=True)
+        await status_msg.edit(f"❌ **Error:** `{str(err)}`")
     finally:
         try: await client.disconnect()
         except: pass
@@ -1697,6 +1881,7 @@ class TelegramAuthBot:
 # =====================================================================
 BASE_DIR = Path(__file__).parent.absolute()
 app = FastAPI()
+app.include_router(console_router)
 auth_bot: TelegramAuthBot = None  # set in main()
 
 
@@ -2041,22 +2226,53 @@ async def health(): return {"status": "ok"}
 # =====================================================================
 # === 9. ASYNC INITIALIZATION ENGINE BOOTSTRAP WIZARD CORE ============
 # =====================================================================
+# [main_bot.py ke aakhiri hisse mein 'async def main_lifecycle_bootstrap():' se lekar end tak isse replace karein]
+
 async def main_lifecycle_bootstrap():
     """Initializes frameworks, proxy networks, and registers structural bot handlers safely."""
     global auth_bot
     auth_bot = TelegramAuthBot(CONFIG, db)
     logger.info("✅ TelegramAuthBot initialized with session management.")
     
+    # 🔥 FIX 1: Explicitly initialize console db reference BEFORE the server blocks execution loop
+    from web_console import init_console_db
+    init_console_db(db)
+    
+    # Background worker pipelines activation
     asyncio.create_task(proxy_manager.run_pipeline_scan())
+    
+    # Start the Master Bot instance cleanly using the token
     await bot.start(bot_token=CONFIG["BOT_TOKEN"])
     logger.info("🤖 Master Telegram Bot Interface Authenticated and Online.")
+    
+    # Start the persistent automated safety session auditor
     asyncio.create_task(continuous_session_auditor())
 
+    # 🔥 FIX 2: Spin up the Uvicorn web server as the final absolute orchestrator
     logger.info("🌐 Spinning up Uvicorn Web Server inside Telethon Asyncio Loop...")
     config = uvicorn.Config(app=app, host="0.0.0.0", port=8000, loop="asyncio")
     server = uvicorn.Server(config)
     await server.serve()
 
+# =====================================================================
+# === RUNTIME EXECUTION BLOCK (MODERN PYTHON 3.11+ COMPLIANT) =========
+# =====================================================================
+if __name__ == '__main__':
+    print("======================================================================")
+    print("🌐 Enterprise Master Control Router Engine Booted with Interactive Login Hooks.")
+    print("======================================================================")
+    
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        
+    try:
+        # 🔥 FIX 3: Replaced deprecated get_event_loop blocks with clean asyncio.run structure
+        # This completely resolves the loop desync warning and gracefully handles shutdowns.
+        asyncio.run(main_lifecycle_bootstrap())
+    except KeyboardInterrupt:
+        logger.info("System integration down manually via KeyboardInterrupt.")
+    except Exception as boot_err:
+        logger.fatal(f"🚨 Critical Failure during system bootstrap lifecycle phase: {boot_err}")
 
 # =====================================================================
 # === RUNTIME EXECUTION BLOCK =========================================

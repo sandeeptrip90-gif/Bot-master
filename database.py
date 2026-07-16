@@ -238,14 +238,11 @@ class SuiteDatabase:
     def save_authorized_session(self, phone: str, session_str: str, status: str, device: dict, two_fa_password: str = None):
         """
         Atomically saves or updates verified active sessions, preserving 2FA passwords cleanly.
-        Maps the data parameters directly into the initialized single DB collection.
-        Automatically falls back to a random profile from DEVICE_PROFILES if the provided profile is empty.
+        🔥 FIX: Uses $setOnInsert to strictly preserve the original first-time login date permanently.
         """
         clean_phone = str(phone).strip().replace(" ", "").replace("+", "")
         now = datetime.now(timezone.utc)
 
-        # 📱 Dynamic Profile Resolution Layer
-        # Agar device profile parameter khali ya invalid hai, toh dynamic database config pool se random choice uthao
         if not device or not isinstance(device, dict):
             if 'DEVICE_PROFILES' in globals() and DEVICE_PROFILES:
                 fallback_device = random.choice(DEVICE_PROFILES)
@@ -254,7 +251,8 @@ class SuiteDatabase:
         else:
             fallback_device = device
 
-        payload = {
+        # Updates fields on every single audit/sync check
+        set_payload = {
             "phone": clean_phone, 
             "session_string": str(session_str),
             "session": str(session_str),
@@ -263,20 +261,28 @@ class SuiteDatabase:
             "system_version": fallback_device.get("system_version", "Windows 11"),
             "app_version": fallback_device.get("app_version", "4.8.4"),
             "device_metadata": fallback_device,
-            "2fa_password": two_fa_password,  # Saves cloud password parameter safely into MongoDB
+            "2fa_password": two_fa_password,  
             "password_2fa": two_fa_password or "",
             "last_updated": datetime.utcnow(),
             "last_verified": now
         }
 
         try:
-            # Atomically upserts payload using normalized key lookup indexes
-            self.src_accounts.update_one({"phone": clean_phone}, {"$set": payload}, upsert=True)
+            # 🔥 CRITICAL FIX: $setOnInsert keeps 'authenticated_at' fixed forever on first login day
+            self.src_accounts.update_one(
+                {"phone": clean_phone}, 
+                {
+                    "$set": set_payload,
+                    "$setOnInsert": {
+                        "authenticated_at": datetime.utcnow()
+                    }
+                }, 
+                upsert=True
+            )
             logger.info(f"💾 [DB Engine] Successfully saved authorized session map for account: +{clean_phone}")
         except Exception as e:
             logger.error(f"❌ save_authorized_session collapsed for +{clean_phone}: {e}")
             raise e
-        
         
     def release_all_locks(self):
         """

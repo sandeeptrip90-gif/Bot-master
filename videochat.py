@@ -101,29 +101,30 @@ class CloudVoiceChatEngine:
 
     async def clean_banned_accounts_handler(self):
         """
-        🎯 ON-DEMAND ACCURATE CLEANER:
-        Yeh database ke har ek record (chahe incomplete ho ya corrupted) ko raw layer se 
-        utha kar live test karega aur banned accounts ko completely wipe out kar dega.
+        🎯 ON-DEMAND ACCURATE AUDITOR & AUTOMATIC DUAL-DB BACKUP SYNC:
+        Yeh database ke har ek record ko live test karega, banned accounts ko wipe out karega,
+        valid sessions ka status active karke 'session_backups' me mirror copy save karega,
+        aur poori standard data report compiled format me return karega.
         """
         import random
-        from telethon import TelegramClient
-        from telethon.sessions import StringSession
+        from datetime import datetime
         from config import CONFIG, DEVICE_PROFILES
 
-        print("📡 Starting Deep Raw Account Validity and Banned Session Cleanup...")
+        print("📡 Starting Deep Raw Account Validity and Strict 'session_backups' Sync...")
         
-        # Directly fetch raw documents from the source_accounts collection only
         all_accounts = self.db.get_all_accounts_raw()
         if not all_accounts:
-            return 0, 0, []
+            return {"processed": 0, "active": 0, "failed": 0, "skipped": 0, "errors": []}
 
+        # 🔥 FIX: All counter variables perfectly initialized
         success_count = 0
         banned_count = 0
+        skipped_count = 0
         error_logs = []
 
         for acc in all_accounts:
             phone = acc.get("phone")
-            session_str = acc.get("session_string")
+            session_str = acc.get("session_string") or acc.get("session")
             api_id = int(acc.get("api_id", CONFIG["API_ID"]))
             api_hash = str(acc.get("api_hash", CONFIG["API_HASH"]))
             
@@ -131,9 +132,23 @@ class CloudVoiceChatEngine:
                 if phone:
                     self.db.remove_account_permanently(phone)
                     banned_count += 1
+                    error_logs.append({"phone": phone, "error": "Session file missing or empty record."})
+                else:
+                    # 🔥 FIX: Skipped count ab perfectly track hoga
+                    skipped_count += 1
                 continue
 
-            device = random.choice(DEVICE_PROFILES) if DEVICE_PROFILES else {}
+            clean_p = str(phone).replace("+", "").replace(" ", "")
+
+            # 🔥 STRICT FINGERPRINT BINDING: Use already saved device from database if present
+            if acc.get("device_model"):
+                device = {
+                    "device_model": acc.get("device_model"),
+                    "system_version": acc.get("system_version", "Windows 11"),
+                    "app_version": acc.get("app_version", "4.8.4")
+                }
+            else:
+                device = random.choice(DEVICE_PROFILES) if DEVICE_PROFILES else {}
             
             client = TelegramClient(
                 StringSession(session_str), api_id, api_hash,
@@ -146,21 +161,73 @@ class CloudVoiceChatEngine:
                 await client.connect()
                 is_authorized = await client.is_user_authorized()
                 
+                # [videochat.py -> clean_banned_accounts_handler() ke andar replace karein]
+                
                 if is_authorized:
                     success_count += 1
+                    current_session_str = client.session.save()
+                    
+                    # 🔥 FIX 1: Direct Status Update without triggering append-only duplicate backups
+                    raw_mongo_db = self.db.src_db
+                    raw_mongo_db[self.db.src_accounts.name].update_one(
+                        {"phone": clean_p},
+                        {"$set": {
+                            "status": "active",
+                            "session": current_session_str,
+                            "session_string": current_session_str,
+                            "last_updated": datetime.utcnow()
+                        }}
+                    )
+                    
+                    # 🔥 FIX 2: Protected Single-Document Upsert Mapping
+                    # Sync chalte waqt yeh valid status update karega, par original login date ko delete nahi hone dega!
+                    try:
+                        # Database documents check karke purani login date read karne ki koshish karein
+                        existing_backup = raw_mongo_db["session_backups"].find_one({"phone": clean_p})
+                        # Agar backup me pehle se authenticated_at hai toh wahi rakhein, nahi toh abhi ki current time lagayein
+                        orig_auth_at = existing_backup.get("authenticated_at") if existing_backup else None
+                        if not orig_auth_at:
+                            orig_auth_at = acc.get("authenticated_at") or acc.get("timestamp") or datetime.utcnow()
+
+                        raw_mongo_db["session_backups"].update_one(
+                            {"phone": clean_p},
+                            {"$set": {
+                                "phone": clean_p,
+                                "session_string": current_session_str,
+                                "status": "active",
+                                "device_model": device["device_model"],
+                                "system_version": device["system_version"],
+                                "app_version": device["app_version"],
+                                "2fa_password": acc.get("2fa_password"),
+                                "authenticated_at": orig_auth_at, # 🔥 LOGIN DATE PRESERVED UPON SYNC
+                                "last_backup_sync": datetime.utcnow()
+                            }},
+                            upsert=True
+                        )
+                    except Exception as backup_err:
+                        print(f"⚠️ Backup Sync failed for +{clean_p}: {backup_err}", flush=True)
                 else:
                     self.db.remove_account_permanently(phone)
                     banned_count += 1
-                    error_logs.append({"phone": phone, "error": "Session Unauthorized/Expired"})
+                    error_logs.append({"phone": phone, "error": "Session unauthorized."})
                     
             except Exception as e:
                 error_str = str(e).lower()
-                if "auth_key_unregistered" in error_str or "user_deactivated" in error_str or "banned" in error_str or "invalid" in error_str:
-                    self.db.remove_account_permanently(phone)
-                    banned_count += 1
-                    error_logs.append({"phone": phone, "error": f"Banned/Deactivated: {str(e)[:40]}"})
+                banned_count += 1
+                
+                # 🔥 FIX 3: Clean error messages for exact router integration
+                if "auth_key_duplicated" in error_str:
+                    reason = "The authorization key was used under two different IP addresses simultaneously."
+                elif any(m in error_str for m in ["auth_key_unregistered", "expired", "unauthorized"]):
+                    reason = "Session unauthorized."
+                elif any(m in error_str for m in ["user_deactivated", "banned"]):
+                    reason = "Account has been banned by Telegram infrastructure."
                 else:
-                    error_logs.append({"phone": phone, "error": f"Network Error: {str(e)[:40]}"})
+                    reason = f"Handshake Collapse: {str(e)[:60]}"
+                
+                self.db.remove_account_permanently(phone)
+                error_logs.append({"phone": phone, "error": reason})
+                
             finally:
                 try:
                     await client.disconnect()
@@ -168,8 +235,15 @@ class CloudVoiceChatEngine:
                     pass
                 await asyncio.sleep(0.4) 
 
-        return success_count, banned_count, error_logs
-
+        # Return cleanly as a dictionary
+        return {
+            "processed": len(all_accounts),
+            "active": success_count,
+            "failed": banned_count,
+            "skipped": skipped_count,
+            "errors": error_logs
+        }
+        
     # =====================================================================
     # === 1. DUAL-DB CROSS REFRESH & OTP DELETION CORE ====================
     # =====================================================================
@@ -450,9 +524,6 @@ class CloudVoiceChatEngine:
             await asyncio.sleep(5.0)
 
             # Keep Alive Tracking Engine Loop (Resilient Core Architecture)
-            # ... (Inside _execute_single_stream method)
-            
-            # Keep Alive Tracking Engine Loop (Resilient Core Architecture)
             while self.is_running:
                 if not client.is_connected():
                     break
@@ -463,19 +534,25 @@ class CloudVoiceChatEngine:
                     self._voice_log(phone, f"Stream healthy. Next tick in {delay}s.")
                     await asyncio.sleep(delay)
                 
-                # 🔥 FIX: Specifically catch WebRTC/Stream dropouts to keep nodes alive
+                # 🔥 FIX: Specifically catch WebRTC/Stream dropouts and RE-INITIATE the stream
                 except Exception as loop_err:
                     err_txt = str(loop_err).lower()
-                    if "no user has" in err_txt or "ijznrn9lipe1y2q1" in err_txt or "dropout" in err_txt:
-                        self._voice_log(phone, f"⚠️ Ghost user / WebRTC signal shift detected: {err_txt}. Staying in channel...", "warning")
-                        await asyncio.sleep(5) # Thoda rest lekar retry karein session drop kiye bina
-                        continue
-                    elif "already ended" in err_txt or "not found" in err_txt:
+                    
+                    # Agar admin ne voice chat hi band kar di hai, toh gracefully exit karein
+                    if "already ended" in err_txt or "not found" in err_txt:
                         self._voice_log(phone, "⚠️ Voice chat dropped by admin. Closing pool...", "error")
                         break
-                    else:
-                        self._voice_log(phone, f"Fluctuation: {loop_err}", "warning")
-                        await asyncio.sleep(10)
+                        
+                    # Kisi bhi tarah ke fluctuation ya stream drop par Auto-Replay trigger karein
+                    self._voice_log(phone, f"⚠️ Stream fluctuation detected: {err_txt}. Re-initiating stream...", "warning")
+                    try:
+                        # Purane script wala exact re-join logic
+                        await app.play(chat_id, MediaStream(media_path=resolved_audio_path))
+                        self._voice_log(phone, "✅ Stream successfully re-initiated!")
+                    except Exception as re_err:
+                        self._voice_log(phone, f"❌ Re-join failed: {re_err}", "error")
+                        
+                    await asyncio.sleep(5)
 
         except Exception as e:
             err_str = str(e).lower()
