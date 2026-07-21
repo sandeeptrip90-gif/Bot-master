@@ -14,6 +14,7 @@ import pathlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import uvicorn
+import re
 
 
 from telethon import TelegramClient, events, Button
@@ -58,7 +59,7 @@ adder_engine = EnterpriseMemberAdder(db, proxy_manager)
 
 # Spawns Master Bot Instance
 bot = TelegramClient('master_control_suite', CONFIG["API_ID"], CONFIG["API_HASH"])
-setup_dmsender_handlers(bot, db)
+dm_engine = setup_dmsender_handlers(bot, db)  
 
 # =====================================================================
 # === GLOBAL DYNAMIC NAVIGATION & PAGINATION CACHE REGISTRY ==========
@@ -98,18 +99,24 @@ def is_admin(sender_id):
 # === 1. TOP PREMIUM STATUS BAR BUILDER HELPER =======================
 # =====================================================================
 def build_premium_status_bar(all_sessions: list) -> str:
-    """Generates a clean, SaaS-style operational summary component."""
+    """Generates a clean, SaaS-style operational summary component including health metrics."""
+    total_accounts = len(all_sessions)
     active_cnt = sum(1 for x in all_sessions if x.get("status") == "active")
     revoked_cnt = sum(1 for x in all_sessions if x.get("status") == "revoked")
-    pending_cnt = sum(1 for x in all_sessions if x.get("status") == "pending")
+    pending_cnt = sum(1 for x in all_sessions if x.get("status") in ["pending", "2fa_required"])
+    failed_cnt = sum(1 for x in all_sessions if x.get("status") in ["failed", "banned"])
     
     worker_id = CONFIG.get("WORKER_NODE_ID", "worker_01")
     proxy_count = proxy_manager.working_count
     
     status_bar = (
         "**Workspace Overview**\n"
-        f"Accounts: 🟢 {active_cnt} Active • 🔴 {revoked_cnt} Revoked • 🟡 {pending_cnt} Pending\n"
-        f"Infrastructure: ⚡ Node `{worker_id}` • 🛡️ {proxy_count} Proxies Healthy\n"
+        f"Total Inventory: `{total_accounts}` Accounts\n"
+        f"🟢 `{active_cnt}` Active (Good Health)\n"
+        f"🟡 `{pending_cnt}` Pending / 2FA\n"
+        f"🟠 `{failed_cnt}` Failed / Spam Muted (Recoverable)\n"
+        f"🔴 `{revoked_cnt}` Revoked / Dead\n"
+        f"Infrastructure: ⚡ Node `{worker_id}` • 🛡️ `{proxy_count}` Proxies Healthy\n"
     )
     return status_bar
 
@@ -175,6 +182,7 @@ async def master_start_panel(event):
 # =====================================================================
 @bot.on(events.CallbackQuery)
 async def centralized_ui_router(event):
+    global HEALTH_CHECK_ACTIVE
     if not is_admin(event.sender_id):
         await event.answer("Access Denied.", alert=True)
         return
@@ -215,7 +223,8 @@ async def centralized_ui_router(event):
              Button.inline("Account Explorer", data="nav_lvl2_explorer")],
             [Button.inline("Reload Sessions", data="action_trigger_reload"),
              Button.inline("Clean Revoked", data="action_trigger_clean")],
-            [Button.inline("Back", data="nav_lvl1_main")]
+            [Button.inline("🏥 Health Scan & Recover Muted", data="action_health_scan")], # 🔥 NEW BUTTON
+            [Button.inline("⬅️ Back to Main Console", data="nav_lvl1_main")]
         ]
         await event.edit(acc_center_text, buttons=acc_center_buttons)
 
@@ -278,19 +287,15 @@ async def centralized_ui_router(event):
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"{status_bar}\n"
             "Deploy parallel actions to your account pool using these commands:\n\n"
-            "🚀 **Mass Member Adder Engine:**\n"
-            "• `/addmembers <link>`\n\n"
-            "🎙️ **Voice Chat Cluster Deployment:**\n"
-            "• `/run_voicechat <link> [count]`\n\n"
-            "💬 **Direct Message Blast Campaigns:**\n"
-            "• `/send_dmsender`\n"
+            "🚀 **Mass Member Adder Engine:** `/addmembers <link>`\n"
+            "🎙️ **Voice Chat Cluster Deployment:** `/run_voicechat <link> [count]`\n"
+            "💬 **Direct Message Blast Campaigns:** `/send_dmsender`\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
-        
-        # 🔥 FIX: Campaigns block se un-related buttons ko hatakar ekdum clean grid design kiya hai
         market_buttons = [
             [Button.inline("🛑 Halt DM Sender", data="action_halt_dm"),
              Button.inline("🔇 Stop Voice Chat", data="action_halt_voice")],
+            [Button.inline("🛑 Halt Member Adder", data="action_halt_adder")], # 🔥 NEW BUTTON
             [Button.inline("⬅️ Back to Main Console", data="nav_lvl1_main")]
         ]
         await event.edit(market_text, buttons=market_buttons)
@@ -334,6 +339,7 @@ async def centralized_ui_router(event):
             f"• Core Worker Node: `{worker_id}`\n"
             f"• Connection Pool Engine: `{cached_handshakes}` active client threads\n"
             f"• Shared Task Queues: `🟢 SYSTEM IDLE / READY`\n\n"
+            f"• Auditor State: `{'🟢 ACTIVE' if HEALTH_CHECK_ACTIVE else '🔴 PAUSED'}`\n"
             "📡 **LIVE TELEMETRY PARAMETERS:**\n"
             "👉 *Niche diye gaye actions ko trigger karke metrics check karein:*\n\n"
             "🔑 **Dynamic OTP Operations:**\n"
@@ -347,17 +353,13 @@ async def centralized_ui_router(event):
         
         # 🔥 PREMIUM SAAS INFRASTRUCTURE BUTTON CONTROL MATRIX
         diag_buttons = [
-            [
-                Button.inline("📡 Scan Proxy Health Grid", data="diag_proxy_health"),
-                Button.inline("⏳ Core Runtime Stats", data="diag_runtime_stats")
-            ],
-            [
-                Button.inline("📨 View Latest OTP Log", data="diag_otp_view"),
-                Button.inline("🚨 Start OTP Live Wait", data="diag_otp_wait")
-            ],
-            [
-                Button.inline("⬅️ Return to Master Console", data="nav_lvl1_main")
-            ]
+            [Button.inline("📡 Scan Proxies", data="diag_proxy_health"),
+             Button.inline("⏳ Runtime Stats", data="diag_runtime_stats")],
+            [Button.inline("📨 View Last OTP", data="diag_otp_view"),
+             Button.inline("🚨 OTP Live Wait", data="diag_otp_wait")],
+            [Button.inline("⏸️ Pause Auditor", data="diag_pause_auditor"), # 🔥 NEW BUTTON
+             Button.inline("▶️ Resume Auditor", data="diag_resume_auditor")], # 🔥 NEW BUTTON
+            [Button.inline("⬅️ Return to Master Console", data="nav_lvl1_main")]
         ]
         await event.edit(diag_text, buttons=diag_buttons)    
 
@@ -652,6 +654,64 @@ async def centralized_ui_router(event):
         except Exception as e:
             await event.edit(f"❌ **Purge Failed:** `{str(e)}`", buttons=back_to_lvl1)
         await event.answer()    
+    
+    # -----------------------------------------------------------------
+    # 🔥 NAYE BUTTONS KE ACTION TRIGGERS
+    # -----------------------------------------------------------------
+    elif route == "action_health_scan":
+        await event.edit("⚕️ **Global Health Scan & Auto-Recovery Initiated!**\n\nScanning `failed` and `restricted` accounts...", buttons=None)
+        
+        all_accounts = db.get_all_accounts_raw()
+        failed_accounts = [acc for acc in all_accounts if acc.get("status") in ["failed", "banned", "restricted"]]
+        
+        if not failed_accounts:
+            await event.edit("✅ **System Health Excellent:** Koi bhi account 'failed' ya 'muted' state mein nahi hai.", buttons=[[Button.inline("⬅️ Back", data="nav_lvl1_accounts")]])
+            return
+
+        recovered_count = 0
+        still_restricted = 0
+        scan_sem = asyncio.Semaphore(5)
+
+        async def _ui_scan_worker(acc):
+            nonlocal recovered_count, still_restricted
+            async with scan_sem:
+                phone = str(acc.get("phone", "")).strip().replace(" ", "").replace("+", "")
+                session_str = acc.get("session_string") or acc.get("session")
+                client = TelegramClient(StringSession(session_str), int(acc.get("api_id", CONFIG["API_ID"])), str(acc.get("api_hash", CONFIG["API_HASH"])), timeout=10)
+                try:
+                    await client.connect()
+                    if await client.is_user_authorized():
+                        await client.get_me()
+                        await client.send_message("SpamBot", "/start")
+                        db.update_session_status(phone, "active", client.session.save())
+                        recovered_count += 1
+                except Exception:
+                    still_restricted += 1
+                finally:
+                    try: await client.disconnect()
+                    except: pass
+                    await asyncio.sleep(0.5)
+
+        await asyncio.gather(*[asyncio.create_task(_ui_scan_worker(a)) for a in failed_accounts])
+        
+        report = (
+            "🏥 **Health Scan & Recovery Complete!**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔍 Scanned: `{len(failed_accounts)}` accounts\n"
+            f"🟢 **Successfully Recovered:** `{recovered_count}`\n"
+            f"🟠 **Still Restricted:** `{still_restricted}`\n"
+        )
+        await event.edit(report, buttons=[[Button.inline("⬅️ Back to Accounts", data="nav_lvl1_accounts")]])
+
+
+    elif route == "action_halt_adder":
+        if adder_engine.is_running:
+            adder_engine.halt_engine()
+            await event.answer("🛑 Member Adder halted safely.", alert=True)
+            await event.edit("🛑 **Member Adder Campaign Halted.** Active processes terminated and locks released.", buttons=[[Button.inline("⬅️ Back", data="nav_lvl1_campaigns")]])
+        else:
+            await event.answer("ℹ️ Koi Adder process active nahi hai.", alert=True)
+
 
 # =====================================================================
 # === 4. REAL-TIME SEARCH TEXT INTERCEPTOR INTERACTION ENGINE =========
@@ -718,6 +778,9 @@ async def catch_global_search_inputs(event):
 # Isse baar-baar connection setup ka load destroy ho jayega
 PERSISTENT_CLIENT_POOL = {}
 
+# 🔥 NEW: Global flag to control background health checks
+HEALTH_CHECK_ACTIVE = True 
+
 audit_logger = logging.getLogger("SessionAuditor")
 
 import ssl
@@ -735,6 +798,11 @@ async def continuous_session_auditor():
 
     while True:
         try:
+            # 🔥 NEW: Agar health check band hai, toh auditor loop yahi ruk jayega
+            if not HEALTH_CHECK_ACTIVE:
+                await asyncio.sleep(30)  # Wait for 30 seconds and check again
+                continue
+            
             # 1. Fetching current inventory profile logs from DB 1
             active_accounts = db.get_active_target_sessions()
             if not active_accounts:
@@ -817,9 +885,6 @@ async def continuous_session_auditor():
                     me = await asyncio.wait_for(client.get_me(), timeout=10.0)
                     
                     if not me:
-                        # 🔥 CRITICAL FIX: SEQUENCE DESYNC HANDLER (The "117 Active" Bug)
-                        # Instead of revoking the account as an active casualty, assume the 
-                        # node is engaged in a background matrix loop and drop the audit check.
                         audit_logger.warning(f"⚠️ Handshake Skipped: get_me() returned blank empty string for +{clean_phone}. Likely processing heavy jobs. Proceeding to next node.")
                         continue
 
@@ -841,7 +906,8 @@ async def continuous_session_auditor():
                     
                 except Exception as generic_err:
                     err_txt = str(generic_err).lower()
-                    if any(marker in err_txt for marker in ["authkey", "sessionrevoked", "expired", "unauthorized", "revoked", "deactivated"]):
+                    # 🔥 FIX 1: Added 'banned', 'locked', 'restricted' to catch ALL ban types
+                    if any(marker in err_txt for marker in ["authkey", "sessionrevoked", "expired", "unauthorized", "revoked", "deactivated", "banned", "locked", "restricted"]):
                         reason_failed = f"Structural Validation Handshake Collapse: {str(generic_err)}"
                     else:
                         audit_logger.debug(f"Transient operational error for +{clean_phone}: {generic_err}. Maintained active state.")
@@ -874,11 +940,12 @@ async def continuous_session_auditor():
                     )
                     
                     admin_id = CONFIG.get("ADMIN_ID")
-                    if admin_id and str(admin_id).strip().isdigit():
+                    if admin_id:  # 🔥 FIX 2: Removed .isdigit() check completely so it works for Groups (-100xxx) too!
                         try:
-                            await bot.send_message(int(admin_id), alert_message)
+                            await bot.send_message(int(str(admin_id).strip()), alert_message)
+                            audit_logger.info(f"✅ Notification successfully sent to Admin for +{clean_phone}")
                         except Exception as send_err:
-                            audit_logger.error(f"Failed to transmit admin network notification token: {send_err}")
+                            audit_logger.error(f"❌ Failed to transmit admin network notification token: {send_err}")
 
                 # Dynamic micro stagger injection between subsequent inline account checks
                 await asyncio.sleep(base_stagger_delay)
@@ -904,6 +971,71 @@ async def continuous_session_auditor():
             await asyncio.sleep(60)
 
 
+
+# =====================================================================
+# === BACKGROUND AUTO-RECOVERY ENGINE =================================
+# =====================================================================
+async def auto_health_recovery_loop():
+    """Background loop that automatically checks and recovers muted accounts every 12 hours."""
+    await asyncio.sleep(3600)  # Bot start hone ke 1 ghante baad pehli baar chalega
+    audit_logger.info("🏥 Auto-Recovery Background Engine Started.")
+
+    while True:
+        if not HEALTH_CHECK_ACTIVE:
+            await asyncio.sleep(60)
+            continue
+
+        try:
+            all_accounts = db.get_all_accounts_raw()
+            failed_accounts = [acc for acc in all_accounts if acc.get("status") in ["failed", "banned", "restricted"]]
+            
+            if failed_accounts:
+                recovered_count = 0
+                for acc in failed_accounts:
+                    phone = str(acc.get("phone", "")).strip().replace(" ", "").replace("+", "")
+                    session_str = acc.get("session_string") or acc.get("session")
+                    api_id = int(acc.get("api_id", CONFIG["API_ID"]))
+                    api_hash = str(acc.get("api_hash", CONFIG["API_HASH"]))
+                    
+                    client = TelegramClient(
+                        StringSession(session_str), api_id, api_hash,
+                        device_model=acc.get("device_model", "PC 64bit"),
+                        system_version=acc.get("system_version", "Windows 11"),
+                        app_version=acc.get("app_version", "4.8.4"),
+                        timeout=10
+                    )
+                    
+                    try:
+                        await client.connect()
+                        if await client.is_user_authorized():
+                            await client.get_me()
+                            # Sending text to verify restriction is gone
+                            await client.send_message("SpamBot", "/start")
+                            db.update_session_status(phone, "active", client.session.save())
+                            recovered_count += 1
+                    except Exception:
+                        pass # Agar abhi bhi ban hai, toh ignore karo aur aage badho
+                    finally:
+                        try: await client.disconnect()
+                        except: pass
+                        await asyncio.sleep(2)  # Har account ke beech 2 second ka gap
+
+                # Agar kuch accounts recover hue hain, toh admin ko message bhejo
+                if recovered_count > 0:
+                    admin_id = CONFIG.get("ADMIN_ID")
+                    if admin_id:
+                        msg = f"🏥 **Auto-Recovery Alert!**\nSystem ne background check run kiya aur `{recovered_count}` accounts ko Spam Mute se successfully nikal kar `ACTIVE` pool mein add kar diya hai! 🟢"
+                        try: await bot.send_message(int(str(admin_id).strip()), msg)
+                        except: pass
+
+        except Exception as e:
+            audit_logger.error(f"Auto-Recovery loop error: {e}")
+
+        # Har 12 Ghante (43200 seconds) baad next check hoga
+        await asyncio.sleep(43200)
+        
+        
+        
 # =====================================================================
 # === 1. INITIALIZE LOGIN PROCESS WITH DEVICE RETENTION (/login) =====
 # =====================================================================
@@ -1421,6 +1553,123 @@ async def account_purge_router(event):
     else:
         await event.reply(f"⚠️ Record match inside system sets failed.")
 
+# =====================================================================
+# === AUTO-RECOVERY & HEALTH SCANNER COMMAND ==========================
+# =====================================================================
+@bot.on(events.NewMessage(pattern='/health_scan'))
+async def global_health_scan_router(event):
+    if not is_admin(event.sender_id): 
+        return
+        
+    status_msg = await event.reply(
+        "⚕️ **Global Health Scan & Auto-Recovery Initiated!**\n\n"
+        "System is currently scanning all `failed` and `restricted` accounts. "
+        "Agar unka temporary Telegram Spam Mute expire ho gaya hoga, toh unhe auto-recover karke wapas `ACTIVE` pool mein add kiya jayega. Please wait..."
+    )
+    
+    all_accounts = db.get_all_accounts_raw()
+    failed_accounts = [acc for acc in all_accounts if acc.get("status") in ["failed", "banned", "restricted"]]
+    
+    if not failed_accounts:
+        await status_msg.edit("✅ **System Health Excellent:** Koi bhi account 'failed' ya 'muted' state mein nahi hai. Auto-recovery ki zaroorat nahi.")
+        return
+
+    recovered_count = 0
+    permanently_dead_count = 0
+    still_restricted_count = 0
+    
+    scan_semaphore = asyncio.Semaphore(5)  # Scan 5 accounts at a time safely
+
+    async def scan_and_recover(acc):
+        nonlocal recovered_count, permanently_dead_count, still_restricted_count
+        async with scan_semaphore:
+            phone = str(acc.get("phone", "")).strip().replace(" ", "").replace("+", "")
+            session_str = acc.get("session_string") or acc.get("session")
+            api_id = int(acc.get("api_id", CONFIG["API_ID"]))
+            api_hash = str(acc.get("api_hash", CONFIG["API_HASH"]))
+            
+            client = TelegramClient(
+                StringSession(session_str), api_id, api_hash,
+                device_model=acc.get("device_model", "PC 64bit"),
+                system_version=acc.get("system_version", "Windows 11"),
+                app_version=acc.get("app_version", "4.8.4"),
+                timeout=10
+            )
+            
+            try:
+                await client.connect()
+                if not await client.is_user_authorized():
+                    raise SessionRevokedError(request=None)
+                
+                # Fetching 'me' to ensure basic connectivity
+                me = await client.get_me()
+                
+                # Verify if the spam restriction is completely lifted using SpamBot logic
+                try:
+                    # Send a test message to a known safe bot to verify text capability
+                    await client.send_message("SpamBot", "/start")
+                    
+                    # If no ChatWriteForbiddenError is thrown, the account is fully recovered
+                    db.update_session_status(phone, "active", client.session.save())
+                    recovered_count += 1
+                except Exception as mute_err:
+                    still_restricted_count += 1
+                    db.mark_account_failed(phone, f"Still Restricted: {str(mute_err)[:60]}")
+                    
+            except (UserDeactivatedError, UserDeactivatedBanError, SessionRevokedError, AuthKeyUnregisteredError):
+                permanently_dead_count += 1
+                db.mark_account_revoked(phone, "Permanently Banned / Revoked by Telegram.")
+            except Exception as e:
+                still_restricted_count += 1
+                db.mark_account_failed(phone, f"Unstable: {str(e)[:60]}")
+            finally:
+                try: await client.disconnect()
+                except Exception: pass
+                await asyncio.sleep(0.5)
+
+    tasks = [asyncio.create_task(scan_and_recover(acc)) for acc in failed_accounts]
+    await asyncio.gather(*tasks)
+
+    # Re-calculate total metrics post-recovery
+    updated_all = db.get_all_accounts_raw()
+    total_active = sum(1 for x in updated_all if x.get("status") == "active")
+    
+    report = (
+        "🏥 **Health Scan & Recovery Complete!**\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔍 Total 'Failed' Scanned: `{len(failed_accounts)}`\n\n"
+        f"🟢 **Successfully Recovered:** `{recovered_count}` (Spam mute lifted!)\n"
+        f"🟠 **Still Restricted/Muted:** `{still_restricted_count}` (Need more time)\n"
+        f"🔴 **Permanently Dead:** `{permanently_dead_count}` (Marked as Revoked)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 **New Active Pool Size:** `{total_active}` Accounts ready for use."
+    )
+    
+    await status_msg.edit(report)
+
+# =====================================================================
+# === HEALTH CHECKER TOGGLE COMMANDS ==================================
+# =====================================================================
+@bot.on(events.NewMessage(pattern=r'/turnof_health'))
+async def turn_off_health_cmd(event):
+    global HEALTH_CHECK_ACTIVE  # 🔥 YE LINE FUNCTION KI SABSE PEHLI LINE HONI CHAHIYE
+    if not is_admin(event.sender_id): return
+    
+    HEALTH_CHECK_ACTIVE = False
+    
+    audit_logger.warning("🛑 Admin initiated manual override: Auditor Health Checks PAUSED.")
+    await event.reply("🛑 **System Health Check / Auditor has been TURNED OFF.**\nBackground account validations, get_me() requests, and ban-checks are now completely paused.")
+
+@bot.on(events.NewMessage(pattern=r'/turnon_health'))
+async def turn_on_health_cmd(event):
+    global HEALTH_CHECK_ACTIVE  # 🔥 YE LINE FUNCTION KI SABSE PEHLI LINE HONI CHAHIYE
+    if not is_admin(event.sender_id): return
+    
+    HEALTH_CHECK_ACTIVE = True
+    
+    audit_logger.info("✅ Admin initiated manual override: Auditor Health Checks RESUMED.")
+    await event.reply("✅ **System Health Check / Auditor has been TURNED ON.**\nBackground account validations have resumed.")
+
 
 # =====================================================================
 # === 5. DYNAMIC DATA EXTRACTION PIPELINE (ROBUST ENGINE MATRICES) ====
@@ -1562,9 +1811,6 @@ async def delete_scraped_files_cmd(event):
         await event.reply(f"❌ **Database Execution Fault:** Cannot drop active records lines: {e}")
 
 
-
-
-import re
 
 def clean_db_name(name):
     """Normalize 'DB001', 'DB-001', 'db001' to 'DB 001' format."""
@@ -1777,15 +2023,28 @@ async def start_voice_engine_cmd(event):
 @bot.on(events.NewMessage(pattern='/status'))
 async def system_diagnostics_snapshot(event):
     active_pool = len(db.get_active_target_sessions())
-    # FIXED: Pointing to the correct 'scraped_members' attribute
     scraped_rows = db.count_scraped_data()
+    
+    # 🌟 Advanced Engine States Extraction
+    adder_state = "`🟢 RUNNING`" if adder_engine.is_running else "`🔴 RESTING`"
+    dm_state = "`🟢 RUNNING`" if dm_engine.is_running else "`🔴 RESTING`"
+    voice_state = "`🟢 ACTIVE`" if voice_engine.is_running else "`🔴 INACTIVE`"
+    
+    # Optional dynamic worker counts mapping if running
+    if adder_engine.is_running:
+        adder_state += f" (Workers: {len(adder_engine._workers)})"
+    if dm_engine.is_running:
+        dm_state += f" (Workers: {len(dm_engine._campaign_manager._workers)})"
+        
     stats_ui = (
-        "📊 **SYSTEM SNAPSHOT METRICS**\n"
+        "📊 **ENTERPRISE SYSTEM SNAPSHOT METRICS**\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"✨ DB 2 Verified Target Sessions Node: `{active_pool}` active\n"
-        f"📂 Scraped Raw Records Pool: `{scraped_rows}` profiles\n"
-        f"🎙️ VoiceChat Engine Loop: " + ("`🟢 ACTIVE`" if voice_engine.is_running else "`🔴 INACTIVE`") + "\n"
-        f"🚀 Member Adder Engine State: " + ("`🟢 RUNNING`" if adder_engine.is_running else "`🔴 RESTING`") + "\n"
+        f"✨ Verified Target Sessions Node: `{active_pool}` active\n"
+        f"📂 Scraped Raw Records Pool: `{scraped_rows}` profiles\n\n"
+        "**Core Engines Status:**\n"
+        f"🚀 Member Adder Engine: {adder_state}\n"
+        f"📨 Direct Message Engine: {dm_state}\n"
+        f"🎙️ VoiceChat Stream Loop: {voice_state}\n\n"
         f"🛡️ Validated Proxies Pool: `{proxy_manager.working_count}` functional"
     )
     await event.reply(stats_ui)
@@ -2229,26 +2488,48 @@ async def health(): return {"status": "ok"}
 # [main_bot.py ke aakhiri hisse mein 'async def main_lifecycle_bootstrap():' se lekar end tak isse replace karein]
 
 async def main_lifecycle_bootstrap():
-    """Initializes frameworks, proxy networks, and registers structural bot handlers safely."""
+    """
+    Initializes frameworks, proxy networks, web views, 
+    and registers structural bot handlers safely.
+    """
     global auth_bot
     auth_bot = TelegramAuthBot(CONFIG, db)
     logger.info("✅ TelegramAuthBot initialized with session management.")
     
-    # 🔥 FIX 1: Explicitly initialize console db reference BEFORE the server blocks execution loop
-    from web_console import init_console_db
-    init_console_db(db)
+    # 1. Registers pure backend data transfer dynamic APIs endpoints safely
+    from fastapi.staticfiles import StaticFiles
+    from web_console import setup_console_routes
     
-    # Background worker pipelines activation
+    router_bound = setup_console_routes(db)
+    app.include_router(router_bound)
+    
+    # 2. Mount and Host the custom raw html frontend folder directly
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    web_view_path = os.path.join(base_dir, "web_view")
+    
+    if os.path.exists(web_view_path):
+        app.mount("/console", StaticFiles(directory=web_view_path, html=True), name="console")
+        logger.info("🌐 Premium Frontend Folder 'web_view' mounted securely under /console directory.")
+    else:
+        logger.error("🚨 Critical Error: 'web_view' frontend asset directory completely missing!")
+
+    # =====================================================================
+    # 🔥 100% INTACT: AAPKE PURANE PROGRAM KE SAARE CORE HANDLERS MATRIX
+    # =====================================================================
+    # Background proxy network verification scan engine trigger
     asyncio.create_task(proxy_manager.run_pipeline_scan())
     
-    # Start the Master Bot instance cleanly using the token
+    # Authenticate and Boot your Main Admin Telegram Bot
     await bot.start(bot_token=CONFIG["BOT_TOKEN"])
     logger.info("🤖 Master Telegram Bot Interface Authenticated and Online.")
     
-    # Start the persistent automated safety session auditor
+    # Run anti-ban continuous session auditor logic loop
     asyncio.create_task(continuous_session_auditor())
+    
+    # 🔥 FIX: Start the Auto-Recovery Engine loop here
+    asyncio.create_task(auto_health_recovery_loop())
 
-    # 🔥 FIX 2: Spin up the Uvicorn web server as the final absolute orchestrator
+    # Start the supreme Uvicorn Web Server container loop
     logger.info("🌐 Spinning up Uvicorn Web Server inside Telethon Asyncio Loop...")
     config = uvicorn.Config(app=app, host="0.0.0.0", port=8000, loop="asyncio")
     server = uvicorn.Server(config)
@@ -2266,32 +2547,9 @@ if __name__ == '__main__':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
         
     try:
-        # 🔥 FIX 3: Replaced deprecated get_event_loop blocks with clean asyncio.run structure
-        # This completely resolves the loop desync warning and gracefully handles shutdowns.
+        # 🔥 FIXED: clean asyncio.run structure handles loops and graceful shutdowns safely
         asyncio.run(main_lifecycle_bootstrap())
     except KeyboardInterrupt:
         logger.info("System integration down manually via KeyboardInterrupt.")
     except Exception as boot_err:
         logger.fatal(f"🚨 Critical Failure during system bootstrap lifecycle phase: {boot_err}")
-
-# =====================================================================
-# === RUNTIME EXECUTION BLOCK =========================================
-# =====================================================================
-if __name__ == '__main__':
-    print("======================================================================")
-    print("🌐 Enterprise Master Control Router Engine Booted with Interactive Login Hooks.")
-    print("======================================================================")
-    
-    if sys.platform == 'win32':
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-        
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-    try:
-        loop.run_until_complete(main_lifecycle_bootstrap())
-    except KeyboardInterrupt:
-        logger.info("System integration down manually.")
