@@ -26,6 +26,7 @@ from telethon.errors import FloodWaitError, ChatAdminRequiredError, UserAlreadyP
 from telethon.tl.functions.phone import GetGroupParticipantsRequest
 
 from config import CONFIG, DEVICE_PROFILES
+from proxy_manager import RobustProxyManager
 
 logger = logging.getLogger("SuiteScraper")
 
@@ -35,8 +36,10 @@ if hasattr(sys.stdout, "reconfigure"):
 class MemberScraper:
     """Handles universal group link decoding, filtering, and hidden participant crawling."""
     
-    def __init__(self, db):
+    def __init__(self, db, proxy_manager: Optional[RobustProxyManager] = None):
         self.db = db
+        self.proxy_manager = proxy_manager
+
 
     def resolve_group_link(self, link_str: str) -> tuple[bool, str]:
         """
@@ -108,6 +111,20 @@ class MemberScraper:
 
     async def _bind_and_join(self, client: TelegramClient, link_str: str) -> Any:
         """Enforces safe auto-joining mechanics for target group verification."""
+        
+        # 🔥 ANTI-BUG FIX: Smart detection for Raw Numeric Group IDs
+        clean_link = str(link_str).replace("<", "").replace(">", "").replace('"', '').replace("'", "").strip()
+        
+        if re.match(r'^-?\d+$', clean_link):
+            print(f"  ℹ️ Direct Numeric Group ID detected: {clean_link}. Bypassing invite join logic...")
+            try:
+                # Group IDs must be fetched directly as integers (User must already be a member)
+                return await client.get_entity(int(clean_link))
+            except Exception as e:
+                print(f"  ❌ Group ID Resolution Failed. Account target group me exist nahi karta: {e}")
+                raise e
+
+        # If it's a normal link/username, proceed with standard auto-join routing
         is_private, token = self.resolve_group_link(link_str)
         print(f"  🔄 Processing entity. Private detection flag: {is_private} | Node string: {token}")
         await asyncio.sleep(random.uniform(1.5, 3.0)) 
@@ -128,6 +145,7 @@ class MemberScraper:
             return await client.get_entity(link_str.replace("<", "").replace(">", "").replace('"', '').replace("'", "").strip())
         return await client.get_entity(token)
 
+
     async def scrape_standard_pool(self, account_doc: Dict, group_link: str, mode: str) -> int:
         """Executes standard lookup operations with active filters (all, 24h, weekly)."""
         phone = str(account_doc.get("phone", ""))
@@ -136,13 +154,24 @@ class MemberScraper:
         session_str = account_doc.get("session_string") or account_doc.get("session")
         device = account_doc.get("device_metadata") or random.choice(DEVICE_PROFILES)
         
+        # Add proxy support
+        proxy_dict = None
+        if self.proxy_manager:
+            proxy_entry = self.proxy_manager.get_proxy("socks5") or self.proxy_manager.get_proxy("any")
+            if proxy_entry:
+                proxy_dict = proxy_entry.dict
+                print(f"  Using proxy {proxy_entry.host}:{proxy_entry.port}")
+            else:
+                print("  No proxy available, using direct.")
+        
         client = TelegramClient(
             StringSession(session_str), 
             int(account_doc.get("api_id", CONFIG["API_ID"])),
             str(account_doc.get("api_hash", CONFIG["API_HASH"])),
             device_model=device.get("device_model", "PC 64bit"),
             system_version=device.get("system_version", "Windows 11"),
-            app_version=device.get("app_version", "4.8.4")
+            app_version=device.get("app_version", "4.8.4"),
+            proxy=proxy_dict,
         )
         
         try:
@@ -203,13 +232,24 @@ class MemberScraper:
         session_str = account_doc.get("session_string") or account_doc.get("session")
         device = account_doc.get("device_metadata") or random.choice(DEVICE_PROFILES)
         
+        # Add proxy support
+        proxy_dict = None
+        if self.proxy_manager:
+            proxy_entry = self.proxy_manager.get_proxy("socks5") or self.proxy_manager.get_proxy("any")
+            if proxy_entry:
+                proxy_dict = proxy_entry.dict
+                print(f"  Using proxy {proxy_entry.host}:{proxy_entry.port}")
+            else:
+                print("  No proxy available, using direct.")
+        
         client = TelegramClient(
             StringSession(session_str), 
             int(account_doc.get("api_id", CONFIG["API_ID"])), 
             str(account_doc.get("api_hash", CONFIG["API_HASH"])),
             device_model=device.get("device_model", "PC 64bit"),
             system_version=device.get("system_version", "Windows 11"),
-            app_version=device.get("app_version", "4.8.4")
+            app_version=device.get("app_version", "4.8.4"),
+            proxy=proxy_dict,
         )
         
         try:
@@ -265,7 +305,6 @@ class MemberScraper:
                 messages_crawled += len(history.messages)
                 await asyncio.sleep(0.1)
                 
-            # Parse active live call arrays
             # Parse active live call arrays
             try:
                 # Dynamically evaluate if entity is a Megagroup/Channel or standard Chat
@@ -323,13 +362,24 @@ class MemberScraper:
         session_str = account_doc.get("session_string") or account_doc.get("session")
         device = account_doc.get("device_metadata") or random.choice(DEVICE_PROFILES)
         
+        # Add proxy support
+        proxy_dict = None
+        if self.proxy_manager:
+            proxy_entry = self.proxy_manager.get_proxy("socks5") or self.proxy_manager.get_proxy("any")
+            if proxy_entry:
+                proxy_dict = proxy_entry.dict
+                print(f"  Using proxy {proxy_entry.host}:{proxy_entry.port}")
+            else:
+                print("  No proxy available, using direct.")
+        
         client = TelegramClient(
             StringSession(session_str), 
             int(account_doc.get("api_id", CONFIG["API_ID"])), 
             str(account_doc.get("api_hash", CONFIG["API_HASH"])),
             device_model=device.get("device_model", "PC 64bit"),
             system_version=device.get("system_version", "Windows 11"),
-            app_version=device.get("app_version", "4.8.4")
+            app_version=device.get("app_version", "4.8.4"),
+            proxy=proxy_dict,
         )
         
         try:
