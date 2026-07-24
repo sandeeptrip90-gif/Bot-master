@@ -614,6 +614,42 @@ class RobustProxyManager:
             f"• Last Scan: `{datetime.fromtimestamp(stats.last_scan).strftime('%H:%M:%S') if stats.last_scan else 'Never'}`"
         )
 
+    async def run_pipeline_scan(self) -> Dict[str, int]:
+        """Full pipeline: scrape → validate → cache. Called at startup."""
+        start_time = time.time()
+
+        logger.info("Starting proxy pipeline scan...")
+
+        # Phase 1: Scrape new proxies
+        new_count = await self.scrape_all_sources()
+
+        # Phase 2: Validate pool
+        working, dead = await self.validate_pool(max_proxies=500)
+
+        # Phase 3: If low on proxies, scrape more
+        if working < 50:
+            logger.info(f"Only {working} working proxies. Scraping additional sources...")
+            await self.scrape_all_sources(timeout=10)
+            working, dead = await self.validate_pool(max_proxies=300)
+
+        elapsed = time.time() - start_time
+
+        result = {
+            "new_scraped": new_count,
+            "working": working,
+            "dead": dead,
+            "total_pool": self.stats.total,
+            "elapsed_seconds": round(elapsed, 1),
+            "sources_scraped": self.stats.sources_used,
+        }
+
+        logger.info(
+            f"Pipeline complete: {result['working']}W/{result['dead']}D "
+            f"({result['new_scraped']} new) in {result['elapsed_seconds']}s"
+        )
+
+        return result
+
     async def shutdown(self) -> None:
         self._save_cache()
         logger.info("ProxyManager shutdown.")
